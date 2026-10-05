@@ -1,6 +1,12 @@
 "use strict";
+function formatSubmissionTime(date = new Date()) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", month: "long", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true, timeZoneName: "short"
+  }).format(date);
+}
 function buildDraft(formData, heading) {
-  const lines = [heading, "", "Submitted on: " + new Date().toISOString()];
+  const lines = [heading, "", "Request prepared on: " + formatSubmissionTime()];
   for (const [key, value] of formData.entries()) lines.push(key.replaceAll("_", " ").toUpperCase() + ": " + value);
   return lines.join("\r\n");
 }
