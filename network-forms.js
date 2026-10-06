@@ -19,6 +19,7 @@ for (const [id, heading, subject] of [
 ]) {
   const form = document.getElementById(id);
   if (!form) continue;
+  form.querySelectorAll(".requires-js").forEach(button => button.disabled = false);
   form.addEventListener("submit", function (event) {
     event.preventDefault();
     if (!form.reportValidity()) return;
@@ -26,6 +27,8 @@ for (const [id, heading, subject] of [
     const fallback = form.querySelector(".email-fallback");
     fallback.hidden = false;
     fallback.querySelector(".draft-text").value = body;
+    fallback.querySelector(".open-draft").href = emailLink(subject, body);
+    fallback.scrollIntoView({ behavior: "auto", block: "center" });
     window.location.href = emailLink(subject, body);
   });
   form.querySelector(".copy-draft").addEventListener("click", async function () {
@@ -40,3 +43,4 @@ for (const [id, heading, subject] of [
     }
   });
 }
+
