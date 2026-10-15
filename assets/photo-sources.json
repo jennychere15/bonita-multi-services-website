@@ -1,0 +1,32 @@
+{
+  "property.jpg": {
+    "source": "https://images.unsplash.com/photo-1600585154340-be6161a56a0c",
+    "usage": "Existing website image retained; architectural illustration, not a specific local listing."
+  },
+  "rental.jpg": {
+    "source": "https://images.unsplash.com/photo-1600607687920-4e2a09cf159d",
+    "usage": "Existing website image retained."
+  },
+  "notary.jpg": {
+    "source": "https://images.unsplash.com/photo-1450101499163-c8848c66ca85",
+    "usage": "Existing website image retained."
+  },
+  "business.jpg": {
+    "source": "https://images.unsplash.com/photo-1497366811353-6870744d04b2",
+    "usage": "Existing website image retained."
+  },
+  "naples-pier.jpg": {
+    "source": "https://www.pexels.com/photo/scenic-view-of-sea-against-sky-258204/",
+    "photographer": "Josh Sorenson",
+    "license": "Pexels License",
+    "location": "Naples, Florida"
+  },
+  "senior-lifestyle.jpg": {
+    "source": "https://www.pexels.com/photo/happy-elderly-couple-5934073/",
+    "license": "Pexels License"
+  },
+  "executive-stay.jpg": {
+    "source": "https://www.pexels.com/photo/interior-of-a-hotel-room-5883728/",
+    "license": "Pexels License"
+  }
+}
