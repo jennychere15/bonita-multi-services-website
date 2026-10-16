@@ -17,6 +17,16 @@ if (stripe) {
   const platform = await stripe.accounts.retrieve();
   if (platform.id !== 'acct_1UQIaJ5uSGpjnhUc') throw new Error('The configured key does not belong to the approved BMS Provider Network sandbox.');
 }
+// Optional sandbox-only credential probe. An intentionally invalid code cannot connect an account.
+if (stripe && config.clientId && process.env.BMS_OAUTH_DIAGNOSTIC === '1') {
+  try { await stripe.oauth.token({ grant_type: 'authorization_code', code: 'bms_invalid_diagnostic_code' }); }
+  catch (error) {
+    const message = String(error.message || '').split(config.stripeKey).join('[redacted]')
+      .replace(/(?:sk|rk|pk)_(?:test|live)_[A-Za-z0-9_]+/g, '[redacted]')
+      .replace(/ac_[A-Za-z0-9_]+/g, '[redacted]').slice(0, 500);
+    console.error('BMS sandbox OAuth credential probe', JSON.stringify({ type: error.type, status: error.statusCode, message }));
+  }
+}
 const db = openStore(process.env.DATABASE_PATH || './data/payments.sqlite');
 const app = createApp({ db, stripe, config });
 const server = http.createServer(async (req, res) => {
