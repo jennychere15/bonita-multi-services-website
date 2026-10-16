@@ -8,7 +8,7 @@ import { accountReady, hash, quote } from '../src/domain.js';
 const base = 'http://localhost:4242';
 const goodAccount = { id: 'acct_provider', country: 'US', charges_enabled: true, payouts_enabled: true,
   capabilities: { card_payments: 'active' }, controller: { stripe_dashboard: { type: 'full' }, fees: { payer: 'account' }, losses: { payments: 'stripe' } } };
-function fixture() {
+function fixture(overrides = {}) {
   const db = openStore(), calls = [], sdk = new Stripe('sk_test_fixture');
   let account = structuredClone(goodAccount), sessionStatus = 'open';
   const stripe = {
@@ -25,7 +25,7 @@ function fixture() {
       id: 'pi_test_bms', livemode: false, status: 'succeeded', amount_received: j.amount, currency: 'usd', application_fee_amount: j.fee, metadata: { bms_job_id: j.id }
     }; } }
   };
-  const config = { baseUrl: base, adminToken: 'test-admin-access-code-that-is-long-enough', stripeKey: 'sk_test_fixture', webhookSecret: 'whsec_fixture', clientId: 'ca_test' };
+  const config = { baseUrl: base, adminToken: 'test-admin-access-code-that-is-long-enough', stripeKey: 'sk_test_fixture', webhookSecret: 'whsec_fixture', clientId: 'ca_test', adminEmail: 'admin@example.com', ...overrides };
   const app = createApp({ db, stripe, config });
   let adminCookie;
   async function request(path, { data, token, cookie, origin = base, method } = {}) {
@@ -57,7 +57,7 @@ function fixture() {
     const r = await app(new Request(base + '/api/webhooks/stripe', { method: 'POST', headers: { 'stripe-signature': sig, 'Content-Type': 'application/json' }, body: payload }));
     return { r, result: await r.json() };
   }
-  return { db, app, config, calls, request, login, provider, job, connect, approve, checkout, event, setAccount: a => { account = a; }, setSession: s => { sessionStatus = s; } };
+  return { db, app, stripe, config, calls, request, login, provider, job, connect, approve, checkout, event, setAccount: a => { account = a; }, setSession: s => { sessionStatus = s; } };
 }
 
 test('only approved fixed tiers and integer cents are accepted', () => {
@@ -205,4 +205,56 @@ test('refund and dispute state survives delayed and out-of-order webhook events'
   await f.event('charge.dispute.created', { payment_intent: 'pi_test_bms', status: 'needs_response' });
   await f.event('checkout.session.completed', { id: 'cs_test_bms', metadata: { bms_job_id: j.id }, client_reference_id: j.id, amount_total: 30000, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_test_bms' });
   const row = f.db.prepare('SELECT * FROM jobs').get(); assert.equal(row.refunded, 30000); assert.equal(row.dispute_status, 'won'); assert.equal(row.status, 'paid');
+});
+
+
+test('verified payment notifications are durable, deduplicated and exclude internal fees from customer email', async t => {
+  const f = fixture(); t.after(() => f.db.close()); const p = await f.provider(), j = await f.job(p); f.connect(p); await f.approve(j); await f.checkout(j);
+  const payload = { id: 'cs_test_bms', metadata: { bms_job_id: j.id }, client_reference_id: j.id, amount_total: 30000, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_test_bms', customer_details: { email: 'customer@example.com' } };
+  await f.request('/payment-return'); assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get().n, 0);
+  await f.event('checkout.session.completed', payload, { signature: false });
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get().n, 0);
+  await f.event('checkout.session.completed', payload);
+  await f.event('checkout.session.async_payment_succeeded', payload);
+  const emails = f.db.prepare('SELECT * FROM notifications').all(); assert.equal(emails.length, 3);
+  const customer = JSON.parse(emails.find(e => e.kind === 'payment_customer').payload);
+  assert.match(customer.text, /300.00/); assert.doesNotMatch(customer.text, /65.00|coordination fee|share before/);
+  assert.equal(f.db.prepare('SELECT customer_email FROM jobs').get().customer_email, 'customer@example.com');
+  assert.equal(emails.every(e => e.status === 'pending'), true);
+});
+test('appointment confirmations require admin access, verified paid customer email and a valid future schedule', async t => {
+  const f = fixture(); t.after(() => f.db.close()); const p = await f.provider(), j = await f.job(p); f.connect(p);
+  const path = '/api/admin/jobs/appointment', data = { jobId: j.id, version: 0, appointmentAt: new Date(Date.now() + 86400000).toISOString(), location: 'Test meeting room', notes: '<Welcome>' };
+  assert.equal((await f.request(path, { data })).r.status, 401); const cookie = await f.login();
+  assert.equal((await f.request(path, { cookie, data })).r.status, 409);
+  f.db.prepare("UPDATE jobs SET status='paid',paid=1,customer_email='customer@example.com'").run();
+  assert.equal((await f.request(path, { cookie, data, origin: 'https://attacker.example' })).r.status, 403);
+  assert.equal((await f.request(path, { cookie, data: { ...data, appointmentAt: '2020-01-01T00:00:00Z' } })).r.status, 400);
+  assert.equal((await f.request(path, { cookie, data })).r.status, 200);
+  assert.equal((await f.request(path, { cookie, data })).r.status, 409);
+  const emails = f.db.prepare('SELECT * FROM notifications').all(); assert.equal(emails.length, 3);
+  const customer = JSON.parse(emails.find(e => e.kind === 'appointment_customer').payload);
+  assert.match(customer.html, /&lt;Welcome&gt;/); assert.match(customer.text, /Eastern Time/);
+  f.db.prepare('UPDATE jobs SET refunded=100').run();
+  assert.equal((await f.request(path, { cookie, data: { ...data, version: 1 } })).r.status, 409);
+  f.db.prepare("UPDATE jobs SET refunded=0,dispute_status='needs_response'").run();
+  assert.equal((await f.request(path, { cookie, data: { ...data, version: 1 } })).r.status, 409);
+});
+
+test('earlier verified payments recover email from matching Stripe Checkout and queue confirmations once', async t => {
+  const f = fixture(); t.after(() => f.db.close()); const p = await f.provider(), j = await f.job(p); f.connect(p);
+  f.db.prepare("UPDATE jobs SET paid=1,status='paid',payment_intent='pi_test_bms',checkout_id='cs_test_bms'").run();
+  const cookie = await f.login(), data = { jobId: j.id }, path = '/api/admin/jobs/payment-emails';
+  assert.equal((await f.request(path, { data })).r.status, 401);
+  let matching = false;
+  f.stripe.checkout.sessions.retrieve = async (...args) => {
+    assert.equal(args[2].stripeAccount, 'acct_provider');
+    return { livemode: false, payment_status: 'paid', payment_intent: matching ? 'pi_test_bms' : 'pi_wrong', client_reference_id: j.id, amount_total: 30000, currency: 'usd', customer_details: { email: 'customer@example.com' } };
+  };
+  assert.equal((await f.request(path, { cookie, data })).r.status, 409); matching = true;
+  assert.equal((await f.request(path, { cookie, data })).r.status, 200);
+  assert.equal((await f.request(path, { cookie, data })).r.status, 200);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get().n, 3);
+  f.db.prepare('UPDATE jobs SET refunded=30000').run();
+  assert.equal((await f.request(path, { cookie, data })).r.status, 409);
 });
