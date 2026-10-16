@@ -25,5 +25,16 @@ export function openStore(path = ':memory:') {
       created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, type TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, action TEXT NOT NULL, record_id TEXT NOT NULL, created INTEGER NOT NULL);`);
+  // Additive migrations preserve the sandbox's existing providers and payment history.
+  const columns = new Set(db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name));
+  for (const [name, type] of Object.entries({ customer_email: 'TEXT', appointment_at: 'TEXT', appointment_location: 'TEXT', appointment_notes: 'TEXT', appointment_version: 'INTEGER NOT NULL DEFAULT 0' })) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${type}`);
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY, job_id TEXT REFERENCES jobs(id), kind TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0,
+    recipient TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL, first_attempt INTEGER,
+    claimed INTEGER, accepted INTEGER, provider_message_id TEXT, error_code TEXT, created INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS notifications_due ON notifications(status,next_attempt);`);
   return db;
 }
