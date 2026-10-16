@@ -70,6 +70,11 @@ async function dashboard() {
   const toolbar = node('div', undefined, 'toolbar'); app.append(toolbar);
   button(toolbar, 'Refresh status', dashboard, true);
   button(toolbar, 'Sign out', async () => { await api('/api/admin/logout', {}, false); await admin(); }, true);
+  const mail = card(app, 'Email notifications', data.email.enabled ? 'Your email connection is enabled. Accepted means the email service accepted the message; it does not confirm inbox delivery.' : 'Email delivery is paused until your BMS sender is connected. Appointment details and queued emails are saved here.');
+  if (data.email.enabled) button(mail, 'Send connection test to BMS', async () => { await api('/api/admin/notifications/test', {}, false); notice('Connection test queued. Refresh email status shortly.'); }, true);
+  data.email.counts.forEach(s => detail(mail, s.status.replaceAll('_', ' '), String(s.count)));
+  const mailDetails = node('details'); mailDetails.append(node('summary', 'Recent email activity'));
+  data.email.recent.forEach(n => mailDetails.append(node('p', `${n.kind.replaceAll('_', ' ')} · ${n.recipient} · ${n.status}${n.error_code ? ' (' + n.error_code + ')' : ''}`, 'small'))); mail.append(mailDetails);
   const grid = node('div', undefined, 'grid'); app.append(grid);
   const p = card(grid, 'Invite a provider');
   const name = field(p, 'Business name', 'business-name'), email = field(p, 'Business email', 'business-email', 'email');
@@ -105,6 +110,28 @@ async function dashboard() {
       button(row, 'Open customer checkout', async () => {
         const result = await api('/api/admin/jobs/payment-link', { jobId: j.id }, false);
         location.assign(result.paymentUrl);
+      }, true);
+    }
+    if (j.paid && !j.refunded && !j.dispute_status) {
+      button(row, 'Queue payment confirmations', async () => {
+        await api('/api/admin/jobs/payment-emails', { jobId: j.id }, false);
+        await dashboard(); notice('Payment confirmations queued. Previously queued or accepted messages are not duplicated.');
+      }, true);
+      if (j.appointment_at) row.append(node('p', 'Appointment: ' + new Date(j.appointment_at).toLocaleString() + ' · ' + j.appointment_location, 'small'));
+      button(row, j.appointment_at ? 'Update appointment' : 'Confirm appointment', async () => {
+        document.querySelector('#appointment-form')?.remove();
+        const form = card(app, j.appointment_at ? 'Update appointment' : 'Confirm appointment', j.title + ' · ' + j.provider); form.id = 'appointment-form';
+        const at = field(form, 'Date and time (' + Intl.DateTimeFormat().resolvedOptions().timeZone + ')', 'appointment-at', 'datetime-local');
+        if (j.appointment_at) { const d = new Date(j.appointment_at); at.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
+        const place = field(form, 'Service address or meeting location', 'appointment-location'); place.maxLength = 500; place.value = j.appointment_location || '';
+        const notes = field(form, 'Appointment notes (optional)', 'appointment-notes'); notes.required = false; notes.maxLength = 1000; notes.value = j.appointment_notes || '';
+        form.append(node('p', data.email.enabled ? 'Saving queues confirmations for the customer, provider and BMS.' : 'Email sending is paused. Saving will queue the confirmations until the sender is connected.', 'small'));
+        button(form, 'Save appointment and queue confirmations', async () => {
+          if (!at.reportValidity() || !place.reportValidity()) return;
+          await api('/api/admin/jobs/appointment', { jobId: j.id, appointmentAt: new Date(at.value).toISOString(), location: place.value, notes: notes.value, version: j.appointment_version }, false);
+          await dashboard(); notice('Appointment saved. Confirmation emails are queued.');
+        });
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, true);
     }
     jobs.append(row);
