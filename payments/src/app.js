@@ -4,7 +4,7 @@ import { accountReady, checkoutParams, equal, hash, quote, requireCondition, tex
 
 const DAY = 86400000;
 const PUBLIC = new URL('../public/', import.meta.url);
-export function createApp({ db, stripe, config, now = Date.now }) {
+export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date.now }) {
   const one = (sql, ...args) => db.prepare(sql).get(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
   const audit = (action, id) => run('INSERT INTO audit(action,record_id,created) VALUES(?,?,?)', action, id, now());
@@ -140,7 +140,7 @@ export function createApp({ db, stripe, config, now = Date.now }) {
       run('DELETE FROM oauth_states WHERE hash=?', state.hash);
       if (url.searchParams.has('error')) return redirect(config.baseUrl + '/provider?connection=cancelled', { 'Set-Cookie': cookieHeader('bms_oauth', '', 0) });
       const code = text(url.searchParams.get('code'), 512);
-      const result = await stripe.oauth.token({ grant_type: 'authorization_code', code });
+      const result = await oauthStripe.oauth.token({ grant_type: 'authorization_code', code });
       requireCondition(result.livemode === false && result.scope === 'read_write' && /^acct_/.test(result.stripe_user_id), 'Stripe connection did not match sandbox access.', 409);
       requireCondition(!one('SELECT id FROM providers WHERE account_id=? AND id<>?', result.stripe_user_id, state.provider_id), 'This Stripe account is already linked to another provider.', 409);
       run('UPDATE providers SET account_id=?,account_kind=?,connected=1 WHERE id=?', result.stripe_user_id, 'oauth', state.provider_id);
