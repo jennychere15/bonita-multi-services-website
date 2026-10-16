@@ -240,7 +240,7 @@ export function createApp({ db, stripe, config, now = Date.now }) {
     catch (error) {
       const status = error.status || (error.type?.startsWith('Stripe') ? 502 : 500);
       // Never return Stripe response bodies, OAuth codes, credentials, or internal stack traces.
-      if (status >= 500) console.error('BMS request failed', { code: error.code || 'internal_error', path: new URL(request.url).pathname });
+      if (status >= 500) console.error('BMS request failed', { code: error.code || 'internal_error', type: error.type || error.name, stripeStatus: error.statusCode, requestId: error.requestId, restrictedKeyRejected: /restricted.*key|key.*restricted/i.test(error.message || ''), path: new URL(request.url).pathname });
       response = json({ error: status >= 500 ? 'This service is not ready right now. Please contact BMS or try again shortly.' : error.message }, status);
     }
     response.headers.set('Cache-Control', 'no-store');
