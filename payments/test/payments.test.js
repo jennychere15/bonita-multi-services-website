@@ -72,6 +72,17 @@ test('provider account must match the agreed payment responsibility configuratio
   assert.equal(accountReady({ ...goodAccount, country: 'CA' }), false);
   assert.equal(accountReady({ ...goodAccount, controller: { ...goodAccount.controller, fees: { payer: 'application' } } }), false);
 });
+test('OAuth Standard accounts with abbreviated controller data remain eligible without bypassing restrictions', () => {
+  const account = { ...goodAccount, type: 'standard', controller: { type: 'account' } };
+  assert.equal(accountReady(account), true);
+  for (const key of ['charges_enabled', 'payouts_enabled']) assert.equal(accountReady({ ...account, [key]: false }), false);
+  assert.equal(accountReady({ ...account, capabilities: { card_payments: 'pending' } }), false);
+  assert.equal(accountReady({ ...account, type: 'express' }), false);
+  assert.equal(accountReady({ ...account, controller: { type: 'application' } }), false);
+  for (const conflict of [{ fees: { payer: 'application' } }, { losses: { payments: 'application' } }, { stripe_dashboard: { type: 'express' } }]) {
+    assert.equal(accountReady({ ...account, controller: { ...account.controller, ...conflict } }), false);
+  }
+});
 test('admin writes require authentication and exact same-origin requests', async t => {
   const f = fixture(); t.after(() => f.db.close());
   assert.equal((await f.request('/api/admin/providers', { data: { name: 'x', email: 'x@x.com' } })).r.status, 401);
