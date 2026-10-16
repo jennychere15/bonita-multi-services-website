@@ -1,0 +1,28 @@
+# Sandbox backend only. No Stripe credentials are stored here.
+# Review Render's cost estimate before approving service creation.
+services:
+  - type: web
+    name: bms-provider-payments-sandbox
+    runtime: node
+    plan: starter
+    region: virginia
+    branch: feature/provider-payments
+    rootDir: payments
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /api/health
+    autoDeployTrigger: off
+    numInstances: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /var/data/payments.sqlite
+    disk:
+      name: bms-provider-records
+      mountPath: /var/data
+      sizeGB: 1

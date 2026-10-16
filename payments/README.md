@@ -30,6 +30,16 @@ These tests are **not** an end-to-end Stripe payment test. Hosted onboarding, OA
 
 ## Deployment requirements
 
+### Prepared browser-based Render setup
+
+The repository-root `render.yaml` prepares one Node 24 Starter service and a 1 GB persistent disk in Virginia. Auto-deploys are off. The service starts without Stripe credentials so its HTTPS URL is available before configuring OAuth redirects and webhooks. Review the cost estimate in Render before creating resources; published starting rates checked October 16, 2026 are $7/month for Starter plus $0.25/month for a 1 GB disk, before tax and additional usage. A workspace upgrade is not required for this configuration.
+
+[Review the Render deployment](https://render.com/deploy?repo=https://github.com/jennychere15/bonita-multi-services-website/tree/feature/provider-payments).
+
+Sign in using GitHub and, if Render requests repository access, limit it to this website repository. Review the prepared service and cost before approving deployment. After the service is created, get the generated `ADMIN_TOKEN` from its Environment settings and use it to sign into the service's `/admin` page. Do not send that token in chat. The service uses Render's assigned HTTPS URL automatically; a custom domain can later be supplied using `BASE_URL`.
+
+Next configure the sandbox Stripe key, development Connect client ID and connected-account webhook signing secret in Render Environment settings. Then perform the end-to-end tests below before adding any link to the public website. Resource creation and paid deployment have not yet been performed.
+
 The static GitHub Pages site cannot execute this service or hold payment credentials. Deploy this directory as a Node 24 service or Docker container behind HTTPS, with a persistent disk mounted at `/app/data`. Run a single instance; SQLite is local to that disk. Back up the database securely. Invitations, quote approval links and customer payment links expire after seven days. An expired Checkout Session requires a new quote in this phase.
 
 Configure the following through the host's secret manager (not chat, source code, GitHub Pages settings or client JavaScript):

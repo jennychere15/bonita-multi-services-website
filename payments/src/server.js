@@ -4,7 +4,7 @@ import { openStore } from './store.js';
 import { createApp } from './app.js';
 
 const config = {
-  baseUrl: (process.env.BASE_URL || 'http://localhost:4242').replace(/\/$/, ''),
+  baseUrl: (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:4242').replace(/\/$/, ''),
   stripeKey: process.env.STRIPE_SECRET_KEY || '', clientId: process.env.STRIPE_CONNECT_CLIENT_ID || '',
   webhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '', adminToken: process.env.ADMIN_TOKEN || ''
 };
