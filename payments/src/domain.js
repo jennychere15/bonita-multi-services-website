@@ -17,9 +17,15 @@ export function quote(input) {
   return { title: text(input.title), amount: input.amount, tier: input.tier, fee };
 }
 export function accountReady(account) {
+  // OAuth-connected, self-controlled Standard accounts omit the controller configuration.
+  // Infer only missing fields from Stripe's Standard mapping; explicit conflicts still fail.
+  const standard = account.type === 'standard' && account.controller?.type === 'account';
+  const dashboard = account.controller?.stripe_dashboard?.type ?? (standard ? 'full' : undefined);
+  const payer = account.controller?.fees?.payer ?? (standard ? 'account' : undefined);
+  const losses = account.controller?.losses?.payments ?? (standard ? 'stripe' : undefined);
   return account.country === 'US' && account.charges_enabled === true && account.payouts_enabled === true &&
-    account.capabilities?.card_payments === 'active' && account.controller?.stripe_dashboard?.type === 'full' &&
-    account.controller?.fees?.payer === 'account' && account.controller?.losses?.payments === 'stripe';
+    account.capabilities?.card_payments === 'active' && dashboard === 'full' &&
+    payer === 'account' && losses === 'stripe';
 }
 export function checkoutParams(job, baseUrl) {
   requireCondition(job.approved && ['approved', 'checkout_open'].includes(job.status), 'The provider must approve this quote before payment.', 409);
