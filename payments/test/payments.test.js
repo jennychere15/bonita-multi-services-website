@@ -98,6 +98,24 @@ test('private invitation tokens are hashed, expired links are denied and approva
   f.db.prepare('UPDATE providers SET expires=0').run();
   assert.equal((await f.request('/api/provider', { token: p.token })).r.status, 401);
 });
+test('administrators can recover an approved payment link after refreshing without changing the quote', async t => {
+  const f = fixture(); t.after(() => f.db.close()); const p = await f.provider(), j = await f.job(p);
+  const path = '/api/admin/jobs/payment-link', data = { jobId: j.id };
+  assert.equal((await f.request(path, { data })).r.status, 401);
+  const cookie = await f.login();
+  assert.equal((await f.request(path, { data, cookie })).r.status, 409);
+  await f.approve(j);
+  assert.equal((await f.request(path, { data, cookie, origin: 'https://attacker.example' })).r.status, 403);
+  const result = await f.request(path, { data, cookie });
+  assert.equal(result.r.status, 200);
+  assert.equal((await f.request('/api/payment', { token: j.payment })).r.status, 401);
+  const renewed = new URL(result.result.paymentUrl).hash.slice(1);
+  assert.equal((await f.request('/api/payment', { token: renewed })).result.amount, 30000);
+  const stored = f.db.prepare('SELECT * FROM jobs WHERE id=?').get(j.id);
+  assert.equal(stored.fee, 6500); assert.ok(stored.approved);
+  f.db.prepare("UPDATE jobs SET paid=1,status='paid' WHERE id=?").run(j.id);
+  assert.equal((await f.request(path, { data, cookie })).r.status, 409);
+});
 test('new providers use Accounts v2 and hosted onboarding without duplicating accounts', async t => {
   const f = fixture(); t.after(() => f.db.close()); const p = await f.provider();
   assert.equal((await f.request('/api/provider/new', { token: p.token, data: {} })).r.status, 200);
