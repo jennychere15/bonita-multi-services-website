@@ -4,15 +4,14 @@ services:
   - type: web
     name: bms-provider-payments-sandbox
     runtime: node
-    plan: starter
+    plan: 0.5c-512mb
     region: virginia
     branch: feature/provider-payments
     rootDir: payments
     buildCommand: npm ci --omit=dev
     startCommand: node src/server.js
     healthCheckPath: /api/health
-    autoDeployTrigger: off
-    numInstances: 1
+    autoDeployTrigger: "off"
     envVars:
       - key: NODE_VERSION
         value: "24"
