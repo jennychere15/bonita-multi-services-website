@@ -17,18 +17,25 @@ if (stripe) {
   const platform = await stripe.accounts.retrieve();
   if (platform.id !== 'acct_1UQIaJ5uSGpjnhUc') throw new Error('The configured key does not belong to the approved BMS Provider Network sandbox.');
 }
-// Optional sandbox-only credential probe. An intentionally invalid code cannot connect an account.
-if (stripe && config.clientId && process.env.BMS_OAUTH_DIAGNOSTIC === '1') {
-  try { await stripe.oauth.token({ grant_type: 'authorization_code', code: 'bms_invalid_diagnostic_code' }); }
+// OAuth can use a separate standard sandbox key; payment operations retain the restricted key.
+const oauthKey = process.env.STRIPE_OAUTH_SECRET_KEY || '';
+if (oauthKey && !oauthKey.startsWith('sk_test_')) throw new Error('STRIPE_OAUTH_SECRET_KEY must be a standard sandbox key.');
+const oauthStripe = oauthKey ? new Stripe(oauthKey, { maxNetworkRetries: 0, timeout: 15000 }) : stripe;
+if (oauthKey) {
+  const oauthPlatform = await oauthStripe.accounts.retrieve();
+  if (oauthPlatform.id !== 'acct_1UQIaJ5uSGpjnhUc') throw new Error('OAuth key must belong to the approved BMS sandbox.');
+}
+// An intentionally invalid code checks authentication without connecting an account.
+if (oauthStripe && config.clientId && process.env.BMS_OAUTH_DIAGNOSTIC === '1') {
+  try { await oauthStripe.oauth.token({ grant_type: 'authorization_code', code: 'bms_invalid_diagnostic_code' }); }
   catch (error) {
-    const message = String(error.message || '').split(config.stripeKey).join('[redacted]')
-      .replace(/(?:sk|rk|pk)_(?:test|live)_[A-Za-z0-9_]+/g, '[redacted]')
-      .replace(/ac_[A-Za-z0-9_]+/g, '[redacted]').slice(0, 500);
-    console.error('BMS sandbox OAuth credential probe', JSON.stringify({ type: error.type, status: error.statusCode, message }));
+    console.error('BMS sandbox OAuth credential check', JSON.stringify({
+      authenticated: error.type === 'StripeInvalidGrantError', type: error.type, status: error.statusCode
+    }));
   }
 }
 const db = openStore(process.env.DATABASE_PATH || './data/payments.sqlite');
-const app = createApp({ db, stripe, config });
+const app = createApp({ db, stripe, oauthStripe, config });
 const server = http.createServer(async (req, res) => {
   try {
     const chunks = []; let size = 0;
