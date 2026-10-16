@@ -78,6 +78,15 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
         audit('provider_invited', id);
         return json({ id, invitationUrl: config.baseUrl + '/provider#' + invite }, 201);
       }
+      if (method === 'POST' && path === '/api/admin/jobs/payment-link') {
+        const input = await body(request), j = one('SELECT * FROM jobs WHERE id=?', input.jobId || '');
+        requireCondition(j, 'Service request was not found.', 404);
+        requireCondition(j.approved && !j.paid && ['approved', 'checkout_open'].includes(j.status), 'Only approved, unpaid requests can receive a payment link.', 409);
+        const payment = token();
+        run('UPDATE jobs SET payment_hash=?,expires=? WHERE id=?', hash(payment), now() + 7 * DAY, j.id);
+        audit('payment_link_renewed', j.id);
+        return json({ paymentUrl: config.baseUrl + '/pay#' + payment });
+      }
       if (method === 'POST' && path === '/api/admin/jobs') {
         const input = await body(request), q = quote(input);
         requireCondition(one('SELECT id FROM providers WHERE id=?', input.providerId || ''), 'Choose a provider.');
