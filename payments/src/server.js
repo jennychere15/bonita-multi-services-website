@@ -2,11 +2,16 @@ import http from 'node:http';
 import Stripe from 'stripe';
 import { openStore } from './store.js';
 import { createApp } from './app.js';
+import { createNotifications } from './notifications.js';
 
 const config = {
   baseUrl: (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:4242').replace(/\/$/, ''),
   stripeKey: process.env.STRIPE_SECRET_KEY || '', clientId: process.env.STRIPE_CONNECT_CLIENT_ID || '',
-  webhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '', adminToken: process.env.ADMIN_TOKEN || ''
+  webhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '', adminToken: process.env.ADMIN_TOKEN || '',
+  emailEnabled: process.env.EMAIL_ENABLED === 'true', resendKey: process.env.RESEND_API_KEY || '',
+  emailFrom: process.env.EMAIL_FROM || 'Bonita Multi-Services <notifications@updates.bonitamultiservices.com>',
+  adminEmail: process.env.BMS_ADMIN_EMAIL || 'Admin@bonitamultiservices.com',
+  emailAllowlist: (process.env.SANDBOX_EMAIL_ALLOWLIST || 'Admin@bonitamultiservices.com,admin+provider-test@bonitamultiservices.com').split(',').map(s => s.trim()).filter(Boolean)
 };
 if (config.adminToken.length < 32) throw new Error('Set ADMIN_TOKEN to a randomly generated value of at least 32 characters in the host secret manager.');
 const origin = new URL(config.baseUrl);
@@ -35,7 +40,10 @@ if (oauthStripe && config.clientId && process.env.BMS_OAUTH_DIAGNOSTIC === '1') 
   }
 }
 const db = openStore(process.env.DATABASE_PATH || './data/payments.sqlite');
-const app = createApp({ db, stripe, oauthStripe, config });
+const notifications = createNotifications({ db, config });
+const app = createApp({ db, stripe, oauthStripe, config, notifications });
+const emailTimer = setInterval(() => notifications.flush().catch(() => console.error('BMS email queue unavailable')), 1000);
+emailTimer.unref();
 const server = http.createServer(async (req, res) => {
   try {
     const chunks = []; let size = 0;
@@ -59,4 +67,4 @@ const server = http.createServer(async (req, res) => {
 server.headersTimeout = 10000;
 server.requestTimeout = 20000;
 server.listen(Number(process.env.PORT || 4242), '0.0.0.0', () => console.log('BMS sandbox payment service is running.'));
-process.on('SIGTERM', () => server.close(() => { db.close(); process.exit(0); }));
+process.on('SIGTERM', () => { clearInterval(emailTimer); server.close(() => process.exit(0)); });
