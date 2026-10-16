@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { accountReady, checkoutParams, equal, hash, quote, requireCondition, text, token } from './domain.js';
+import { createNotifications, validEmail } from './notifications.js';
 
 const DAY = 86400000;
 const PUBLIC = new URL('../public/', import.meta.url);
-export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date.now }) {
+export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date.now, notifications = createNotifications({ db, config, now }) }) {
   const one = (sql, ...args) => db.prepare(sql).get(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
   const audit = (action, id) => run('INSERT INTO audit(action,record_id,created) VALUES(?,?,?)', action, id, now());
@@ -40,6 +41,15 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
     run('UPDATE providers SET ready=? WHERE id=?', Number(ready), p.id);
     return ready;
   }
+  async function customerEmail(j) {
+    if (validEmail(j.customer_email)) return j.customer_email;
+    requireStripe();
+    const p = one('SELECT account_id FROM providers WHERE id=?', j.provider_id);
+    const session = await stripe.checkout.sessions.retrieve(j.checkout_id, {}, { stripeAccount: p.account_id });
+    requireCondition(session.livemode === false && session.payment_status === 'paid' && session.payment_intent === j.payment_intent && session.client_reference_id === j.id && session.amount_total === j.amount && session.currency === 'usd', 'Stripe payment details could not be verified.', 409);
+    requireCondition(validEmail(session.customer_details?.email), 'Customer email is unavailable in Stripe. Please review the payment before scheduling.', 409);
+    return session.customer_details.email;
+  }
   const loginAttempts = new Map();
   async function route(request) {
     const url = new URL(request.url), path = url.pathname, method = request.method;
@@ -68,8 +78,42 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
       }
       if (method === 'GET' && path === '/api/admin/overview') return json({
         providers: db.prepare('SELECT id,name,email,account_id,ready,connected,expires FROM providers ORDER BY created DESC LIMIT 100').all(),
-        jobs: db.prepare('SELECT j.id,j.title,j.amount,j.fee,j.tier,j.status,j.approved,j.paid,j.refunded,j.dispute_status,p.name AS provider FROM jobs j JOIN providers p ON p.id=j.provider_id ORDER BY j.created DESC LIMIT 100').all()
+        jobs: db.prepare('SELECT j.id,j.title,j.amount,j.fee,j.tier,j.status,j.approved,j.paid,j.refunded,j.dispute_status,j.customer_email,j.appointment_at,j.appointment_location,j.appointment_notes,j.appointment_version,p.name AS provider FROM jobs j JOIN providers p ON p.id=j.provider_id ORDER BY j.created DESC LIMIT 100').all(),
+        email: notifications.overview()
       });
+      if (method === 'POST' && path === '/api/admin/notifications/test') {
+        requireCondition(notifications.enabled(), 'Connect the BMS email sender in Render first.', 409);
+        notifications.test(); return json({ queued: true });
+      }
+      if (method === 'POST' && path === '/api/admin/jobs/payment-emails') {
+        const input = await body(request), j = one('SELECT * FROM jobs WHERE id=?', input.jobId || '');
+        requireCondition(j?.paid && j.refunded === 0 && !j.dispute_status, 'Only paid requests without a refund or dispute can receive payment confirmations.', 409);
+        const email = await customerEmail(j);
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          run('UPDATE jobs SET customer_email=? WHERE id=?', email, j.id);
+          notifications.payment(j.id); audit('payment_emails_queued', j.id); db.exec('COMMIT');
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+        return json({ queued: true });
+      }
+      if (method === 'POST' && path === '/api/admin/jobs/appointment') {
+        const input = await body(request), j = one('SELECT * FROM jobs WHERE id=?', input.jobId || '');
+        requireCondition(j, 'Service request was not found.', 404);
+        requireCondition(j.paid && j.refunded === 0 && !j.dispute_status, 'Only paid requests without a refund or dispute can be scheduled.', 409);
+        const appointmentAt = text(input.appointmentAt, 40), time = Date.parse(appointmentAt);
+        requireCondition(/Z$/.test(appointmentAt) && Number.isFinite(time) && time > now() && time < now() + 366 * DAY, 'Choose a future appointment within the next year.');
+        const location = text(input.location, 500), notes = input.notes ? text(input.notes, 1000) : '';
+        requireCondition(Number.isSafeInteger(input.version) && input.version === j.appointment_version, 'This appointment changed. Refresh the page before saving.', 409);
+        // Earlier sandbox payments predate email collection; recover from their verified Stripe session.
+        const email = await customerEmail(j);
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const changed = run('UPDATE jobs SET customer_email=?,appointment_at=?,appointment_location=?,appointment_notes=?,appointment_version=appointment_version+1 WHERE id=? AND appointment_version=? AND refunded=0 AND dispute_status IS NULL', email, new Date(time).toISOString(), location, notes, j.id, input.version);
+          requireCondition(changed.changes === 1, 'This request changed. Refresh the page before saving.', 409);
+          notifications.appointment(j.id); audit('appointment_confirmed', j.id); db.exec('COMMIT');
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+        return json({ confirmed: true, emailQueued: true });
+      }
       if (method === 'POST' && path === '/api/admin/providers') {
         const input = await body(request), name = text(input.name), email = text(input.email, 254);
         requireCondition(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email), 'Enter a valid email address.');
@@ -221,13 +265,16 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
           requireCondition(j.approved && j.connected === 1 && event.account === j.account_id && object.id === j.checkout_id && object.client_reference_id === j.id && object.amount_total === j.amount && object.currency === 'usd', 'Payment does not match the approved quote.', 409);
           const pi = await stripe.paymentIntents.retrieve(object.payment_intent, {}, { stripeAccount: j.account_id });
           requireCondition(pi.livemode === false && pi.status === 'succeeded' && pi.amount_received === j.amount && pi.currency === 'usd' && pi.application_fee_amount === j.fee && pi.metadata?.bms_job_id === j.id, 'Payment fee verification failed.', 409);
-          payment = { job: j.id, intent: pi.id };
+          payment = { job: j.id, intent: pi.id, email: validEmail(object.customer_details?.email) ? object.customer_details.email : null };
         }
       }
       db.exec('BEGIN IMMEDIATE');
       try {
         if (one('SELECT id FROM webhook_events WHERE id=?', event.id)) { db.exec('COMMIT'); return json({ received: true }); }
-        if (payment) run("UPDATE jobs SET status='paid',paid=COALESCE(paid,?),payment_intent=? WHERE id=?", now(), payment.intent, payment.job);
+        if (payment) {
+          run("UPDATE jobs SET status='paid',paid=COALESCE(paid,?),payment_intent=?,customer_email=COALESCE(customer_email,?) WHERE id=?", now(), payment.intent, payment.email, payment.job);
+          notifications.payment(payment.job);
+        }
         if (event.type === 'account.application.deauthorized') run('UPDATE providers SET connected=0,ready=0 WHERE account_id=?', event.account || '');
         if (event.type === 'account.updated') run('UPDATE providers SET ready=? WHERE account_id=? AND connected=1', Number(accountReady(object)), object.id);
         if (['checkout.session.expired', 'checkout.session.async_payment_failed'].includes(event.type)) run('UPDATE jobs SET status=? WHERE checkout_id=? AND paid IS NULL AND provider_id IN (SELECT id FROM providers WHERE account_id=?)', event.type.endsWith('expired') ? 'expired' : 'payment_failed', object.id, event.account || '');
