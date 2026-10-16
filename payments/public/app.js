@@ -98,7 +98,17 @@ async function dashboard() {
   data.providers.forEach(p => { const row = node('div', undefined, 'list-row'); row.append(node('strong', p.name), node('span', p.ready ? 'Ready for payments' : p.connected ? 'Setup in progress' : 'Awaiting connection', 'status')); providers.append(row); });
   const jobs = card(app, 'Service requests');
   if (!data.jobs.length) jobs.append(node('p', 'Your quotes and payment activity will appear here.'));
-  data.jobs.forEach(j => { const row = node('div', undefined, 'list-row'); row.append(node('strong', j.title + ' · ' + j.provider), node('span', money(j.amount) + ' · ' + j.status.replaceAll('_', ' ') + (j.refunded ? ' · Refunded ' + money(j.refunded) : '') + (j.dispute_status ? ' · Dispute: ' + j.dispute_status : ''), 'status')); jobs.append(row); });
+  data.jobs.forEach(j => {
+    const row = node('div', undefined, 'list-row');
+    row.append(node('strong', j.title + ' · ' + j.provider), node('span', money(j.amount) + ' · ' + j.status.replaceAll('_', ' ') + (j.refunded ? ' · Refunded ' + money(j.refunded) : '') + (j.dispute_status ? ' · Dispute: ' + j.dispute_status : ''), 'status'));
+    if (j.approved && !j.paid && ['approved', 'checkout_open'].includes(j.status)) {
+      button(row, 'Open customer checkout', async () => {
+        const result = await api('/api/admin/jobs/payment-link', { jobId: j.id }, false);
+        location.assign(result.paymentUrl);
+      }, true);
+    }
+    jobs.append(row);
+  });
 }
 async function admin() {
   try { await dashboard(); }
