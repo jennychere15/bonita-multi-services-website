@@ -20,7 +20,8 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
  const clean=(v,n)=>typeof v==='string'?v.trim().slice(0,n):'';
  const ready=()=>Boolean(config.roomPaymentsEnabled&&config.roomStripeKey&&config.roomWebhookSecret&&stripe);
  const conflict=r=>one("SELECT id FROM room_bookings WHERE date=? AND start<? AND end>? AND status IN ('held','processing','confirmed','blocked') AND id<>?",r.date,r.end,r.start,r.id||'');
- const describe=r=>`${r.date}, ${Math.floor(r.start/60)}:00–${Math.floor(r.end/60)}:00 Eastern · ${r.guests} guests · $${(r.amount/100).toFixed(2)}`;
+ const time=m=>`${Math.floor(m/60)%12||12}:${String(m%60).padStart(2,'0')} ${m<720?'AM':'PM'}`;
+ const describe=r=>`${r.date}, ${time(r.start)}–${time(r.end)} Eastern · ${r.guests} guests · $${(r.amount/100).toFixed(2)}\nBooking reference: ${r.id}`;
  const notify=(r,kind,title,lines,to=config.adminEmail)=>notifications.room(r.id,kind,to,title,lines);
  const atomic=fn=>{db.exec('BEGIN IMMEDIATE');try{const value=fn();db.exec('COMMIT');return value;}catch(e){db.exec('ROLLBACK');throw e;}};
  async function checkout(r){
@@ -45,7 +46,8 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
      requireCondition(['held','processing','confirmed'].includes(r.status),'Booking needs review.',409);
      if(s.payment_status==='paid'){
       run("UPDATE room_bookings SET status='confirmed',payment_intent=? WHERE id=?",s.payment_intent,r.id);
-      for(const to of [r.email,config.adminEmail])notify(r,'confirmed_'+to,'Your meeting room is confirmed',[describe(r),'Bonita Multi-Services · 11100 Bonita Beach Road, Unit 108-B-1&2, Bonita Springs, FL 34135','Optional upgrades are arranged and charged separately. Reply for arrival instructions or changes.'],to);
+      notify(r,'confirmed_'+r.email,'Your meeting room is confirmed',[`Thank you, ${r.name}. Your payment has been verified and your private room is reserved.`,describe(r),'Bonita Multi-Services · Oak Creek Crossing\n11100 Bonita Beach Road, Unit 108-B-1&2, Bonita Springs, FL 34135','Please include setup and packing up within your reserved hours. Maximum six guests. TV and whiteboard are available.','Coffee, breakfast catering, printing and scanning are optional and quoted separately. BMS will coordinate your equipment needs and arrival details. For help or booking changes, reply to this email or call 941-404-5379.'],r.email);
+      notify(r,'confirmed_'+config.adminEmail,'Paid meeting room booking — action required',[describe(r),`Customer: ${r.name}\nEmail: ${r.email}\nPhone: ${r.phone}`,r.notes||'No optional requests provided.','Coordinate arrival and equipment needs with the customer. Quote any requested upgrades separately.',`Review the reservation: ${config.baseUrl}/room-admin`],config.adminEmail);
      }else run("UPDATE room_bookings SET status='processing' WHERE id=? AND status='held'",r.id);
     }else run("UPDATE room_bookings SET status='expired' WHERE id=? AND status IN ('held','processing')",r.id);
     run('INSERT INTO room_events VALUES(?,?)',e.id,now());

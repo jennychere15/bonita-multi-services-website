@@ -70,3 +70,18 @@ test('live messages omit sandbox wording and send to real job recipients without
   }
   assert.deepEqual([...new Set(f.sent.map(s => s.payload.to[0]))].sort(), ['admin@example.com', 'customer@example.com', 'provider@example.com']);
 });
+
+test('delayed room emails suppress expired holds and send only current confirmations', async t => {
+  const f = setup(t); f.config.paymentMode = 'live';
+  const roomId = '12345678-1234-1234-1234-123456789012';
+  f.db.exec('CREATE TABLE room_bookings(id TEXT PRIMARY KEY,status TEXT,date TEXT)');
+  f.db.prepare('INSERT INTO room_bookings VALUES(?,?,?)').run(roomId,'expired','2026-11-15');
+  f.mail.room(roomId,'payment_link','customer@example.com','Complete payment',['Old link']);
+  f.mail.room(roomId,'request_admin','admin@example.com','Request',['Expired setup request']);
+  await f.mail.flush(); await f.mail.flush(); assert.equal(f.sent.length,0);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE status='cancelled'").get().n,2);
+  f.db.prepare("UPDATE room_bookings SET status='confirmed'").run();
+  f.mail.room(roomId,'confirmed_customer@example.com','customer@example.com','Confirmed',['Current paid booking']);
+  await f.mail.flush(); assert.equal(f.sent.length,1);
+  assert.equal(f.sent[0].payload.subject,'Confirmed');
+});

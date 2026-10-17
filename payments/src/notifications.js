@@ -68,6 +68,17 @@ export function createNotifications({ db, config, now = Date.now, send = sendRes
       run("UPDATE notifications SET status='pending' WHERE status='sending' AND claimed<?", now() - 60000);
       const row = one("SELECT * FROM notifications WHERE status='pending' AND next_attempt<=? ORDER BY created,id LIMIT 1", now());
       if (!row) return;
+      // A delayed room notice must still describe the reservation's current state.
+      const roomNotice = /^room_([0-9a-f-]{36})_(.+)$/.exec(row.kind);
+      if (roomNotice) {
+        const room = one('SELECT status,date FROM room_bookings WHERE id=?', roomNotice[1]);
+        const kind = roomNotice[2];
+        const valid = room && (kind.startsWith('confirmed_') ? room.status === 'confirmed' : kind === 'payment_link' ? room.status === 'held' : ['requested','held'].includes(room.status));
+        const today = new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now()));
+        if (!valid || room.date < today) {
+          run("UPDATE notifications SET status='cancelled',error_code='superseded' WHERE id=?", row.id); return;
+        }
+      }
       const j = row.job_id ? one('SELECT * FROM jobs WHERE id=?', row.job_id) : null;
       if (j && (j.refunded >= j.amount || (row.kind.startsWith('appointment_') && (j.refunded || j.dispute_status || j.appointment_version !== row.version)))) {
         run("UPDATE notifications SET status='cancelled',error_code='superseded' WHERE id=?", row.id); return;
