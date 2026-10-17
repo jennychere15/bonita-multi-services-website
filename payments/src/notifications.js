@@ -88,7 +88,7 @@ export function createNotifications({ db, config, now = Date.now, send = sendRes
       }
     } finally { busy = false; }
   }
-  return { payment, appointment, flush, enabled, test: () => enqueue(null, 'connection_test', config.adminEmail, 'Your BMS email connection is ready', ['Payment and appointment notifications can now be sent from your BMS service.']),
+  return { payment, appointment, flush, enabled, room: (id,kind,recipient,title,lines) => enqueue(null, 'room_'+id+'_'+kind, recipient, title, lines), test: () => enqueue(null, 'connection_test', config.adminEmail, 'Your BMS email connection is ready', ['Payment and appointment notifications can now be sent from your BMS service.']),
     overview: () => ({ enabled: enabled(), from: config.emailFrom || '', adminEmail: config.adminEmail || '',
       counts: db.prepare('SELECT status,COUNT(*) AS count FROM notifications GROUP BY status').all(),
       recent: db.prepare('SELECT id,kind,recipient,status,error_code,created FROM notifications ORDER BY created DESC LIMIT 20').all() }) };

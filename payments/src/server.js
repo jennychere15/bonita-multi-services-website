@@ -6,6 +6,8 @@ import { createNotifications } from './notifications.js';
 import { validateDeployment } from './environment.js';
 
 const config = {
+  roomRequestsEnabled: process.env.ROOM_REQUESTS_ENABLED === 'true', roomPaymentsEnabled: process.env.ROOM_PAYMENTS_ENABLED === 'true',
+  roomStripeKey: process.env.ROOM_STRIPE_SECRET_KEY || '', roomWebhookSecret: process.env.ROOM_STRIPE_WEBHOOK_SECRET || '',
   paymentMode: process.env.PAYMENT_MODE || 'sandbox', livePaymentsEnabled: process.env.LIVE_PAYMENTS_ENABLED === 'true',
   baseUrl: (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:4242').replace(/\/$/, ''),
   stripeKey: process.env.STRIPE_SECRET_KEY || '', clientId: process.env.STRIPE_CONNECT_CLIENT_ID || '',
@@ -39,9 +41,15 @@ if (!environment.live && oauthStripe && config.clientId && process.env.BMS_OAUTH
     }));
   }
 }
+const roomStripe = config.roomStripeKey ? new Stripe(config.roomStripeKey, { maxNetworkRetries: 0, timeout: 15000 }) : null;
+if (roomStripe) {
+  if ((config.paymentMode === 'live') !== /^(sk|rk)_live_/.test(config.roomStripeKey)) throw new Error('Room payment key must match the service mode.');
+  const account = await roomStripe.accounts.retrieve();
+  if (config.paymentMode === 'live' && account.id !== 'acct_1UQ8tWQhdCDcrQgc') throw new Error('Room payments must use the BMS direct-service Stripe account.');
+}
 const db = openStore(process.env.DATABASE_PATH || './data/payments.sqlite');
 const notifications = createNotifications({ db, config });
-const app = createApp({ db, stripe, oauthStripe, config, notifications });
+const app = createApp({ db, stripe, roomStripe, oauthStripe, config, notifications });
 const emailTimer = setInterval(() => notifications.flush().catch(() => console.error('BMS email queue unavailable')), 1000);
 emailTimer.unref();
 const server = http.createServer(async (req, res) => {

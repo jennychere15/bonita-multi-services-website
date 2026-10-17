@@ -3,10 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { accountReady, checkoutParams, equal, hash, quote, requireCondition, text, token } from './domain.js';
 import { createNotifications, validEmail } from './notifications.js';
 import { bindEnvironment } from './environment.js';
+import { createRoomRoutes } from './rooms.js';
 
 const DAY = 86400000;
 const PUBLIC = new URL('../public/', import.meta.url);
-export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date.now, notifications = createNotifications({ db, config, now }) }) {
+export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe, config, now = Date.now, notifications = createNotifications({ db, config, now }) }) {
   const environment = bindEnvironment(db, config);
   const one = (sql, ...args) => db.prepare(sql).get(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
@@ -56,9 +57,12 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
     requireCondition(validEmail(session.customer_details?.email), 'Customer email is unavailable in Stripe. Please review the payment before scheduling.', 409);
     return session.customer_details.email;
   }
+  const roomRoutes = createRoomRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, now });
   const loginAttempts = new Map();
   async function route(request) {
     const url = new URL(request.url), path = url.pathname, method = request.method;
+    const roomResponse = await roomRoutes(request);
+    if (roomResponse) return roomResponse;
     if (method === 'POST' && path !== '/api/webhooks/stripe') {
       requireCondition(request.headers.get('origin') === config.baseUrl, 'Request origin is not allowed.', 403);
     }
@@ -294,7 +298,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       return json({ received: true });
     }
-    const files = { '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     if (method === 'GET' && files[path]) {
       let content = await readFile(new URL(files[path][0], PUBLIC));
       if (files[path][0] === 'index.html' && environment.live) content = content.toString().replace('SANDBOX PREVIEW', config.livePaymentsEnabled ? 'PROVIDER NETWORK' : 'PAYMENTS SETUP');
