@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { accountReady, checkoutParams, equal, hash, quote, requireCondition, text, token } from './domain.js';
 import { createNotifications, validEmail } from './notifications.js';
+import { bindEnvironment } from './environment.js';
 
 const DAY = 86400000;
 const PUBLIC = new URL('../public/', import.meta.url);
 export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date.now, notifications = createNotifications({ db, config, now }) }) {
+  const environment = bindEnvironment(db, config);
   const one = (sql, ...args) => db.prepare(sql).get(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
   const audit = (action, id) => run('INSERT INTO audit(action,record_id,created) VALUES(?,?,?)', action, id, now());
@@ -13,7 +15,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
   const cookieHeader = (name, value, age) => `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${config.baseUrl.startsWith('https:') ? '; Secure' : ''}`;
   const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json', ...headers } });
   const redirect = (url, headers = {}) => new Response(null, { status: 303, headers: { Location: url, ...headers } });
-  const requireStripe = () => requireCondition(stripe && config.stripeKey && config.webhookSecret, 'Stripe sandbox configuration is not complete yet.', 503);
+  const requireStripe = () => requireCondition(stripe && config.stripeKey && config.webhookSecret, 'Stripe configuration is not complete yet.', 503);
   const bearer = request => request.headers.get('authorization')?.replace(/^Bearer /, '') || '';
   function providerAuth(request) {
     const p = one('SELECT * FROM providers WHERE invite_hash=? AND expires>?', hash(bearer(request)), now());
@@ -37,7 +39,11 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
   async function refreshProvider(p) {
     requireCondition(p.connected && p.account_id, 'Connect your Stripe account first.', 409);
     const account = await stripe.accounts.retrieve(p.account_id);
-    const ready = accountReady(account);
+    let ready = accountReady(account);
+    if (environment.live && p.account_kind === 'v2') {
+      const v2 = await stripe.v2.core.accounts.retrieve(p.account_id, { include: ['configuration.merchant', 'defaults', 'identity'] });
+      ready = ready && v2.id === p.account_id && v2.livemode === true && v2.identity?.country?.toUpperCase() === 'US' && v2.dashboard === 'full' && v2.configuration?.merchant?.capabilities?.card_payments?.status === 'active' && v2.defaults?.responsibilities?.fees_collector === 'stripe' && v2.defaults?.responsibilities?.losses_collector === 'stripe';
+    }
     run('UPDATE providers SET ready=? WHERE id=?', Number(ready), p.id);
     return ready;
   }
@@ -46,7 +52,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
     requireStripe();
     const p = one('SELECT account_id FROM providers WHERE id=?', j.provider_id);
     const session = await stripe.checkout.sessions.retrieve(j.checkout_id, {}, { stripeAccount: p.account_id });
-    requireCondition(session.livemode === false && session.payment_status === 'paid' && session.payment_intent === j.payment_intent && session.client_reference_id === j.id && session.amount_total === j.amount && session.currency === 'usd', 'Stripe payment details could not be verified.', 409);
+    requireCondition(session.livemode === environment.live && session.payment_status === 'paid' && session.payment_intent === j.payment_intent && session.client_reference_id === j.id && session.amount_total === j.amount && session.currency === 'usd', 'Stripe payment details could not be verified.', 409);
     requireCondition(validEmail(session.customer_details?.email), 'Customer email is unavailable in Stripe. Please review the payment before scheduling.', 409);
     return session.customer_details.email;
   }
@@ -56,7 +62,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
     if (method === 'POST' && path !== '/api/webhooks/stripe') {
       requireCondition(request.headers.get('origin') === config.baseUrl, 'Request origin is not allowed.', 403);
     }
-    if (method === 'GET' && path === '/api/health') return json({ status: 'ok', mode: 'sandbox', stripeConfigured: Boolean(config.stripeKey && config.webhookSecret), oauthConfigured: Boolean(config.clientId) });
+    if (method === 'GET' && path === '/api/health') return json({ status: 'ok', mode: environment.mode, livePaymentsEnabled: environment.live && config.livePaymentsEnabled === true, stripeConfigured: Boolean(config.stripeKey && config.webhookSecret), oauthConfigured: Boolean(config.clientId) });
     if (method === 'POST' && path === '/api/admin/login') {
       const input = await body(request);
       // Global bounded rate limit: repeated login attempts cannot grow process memory.
@@ -168,10 +174,10 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
             configuration: { merchant: { capabilities: { card_payments: { requested: true } } } },
             defaults: { currency: 'usd', responsibilities: { fees_collector: 'stripe', losses_collector: 'stripe' } },
             metadata: { bms_provider_id: p.id } }, { idempotencyKey: 'bms-provider-' + p.id });
-          requireCondition(account.livemode === false, 'Unexpected Stripe account mode.', 502);
+          requireCondition(account.livemode === environment.live, 'Unexpected Stripe account mode.', 502);
           run('UPDATE providers SET account_id=?,account_kind=?,connected=1 WHERE id=?', account.id, 'v2', p.id);
           p.account_id = account.id; p.account_kind = 'v2';
-          audit('sandbox_account_created', p.id);
+          audit(environment.mode + '_account_created', p.id);
         }
         requireCondition(p.account_kind === 'v2',
           'Use your existing Stripe Dashboard to manage this account.', 409);
@@ -194,7 +200,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
       if (url.searchParams.has('error')) return redirect(config.baseUrl + '/provider?connection=cancelled', { 'Set-Cookie': cookieHeader('bms_oauth', '', 0) });
       const code = text(url.searchParams.get('code'), 512);
       const result = await oauthStripe.oauth.token({ grant_type: 'authorization_code', code });
-      requireCondition(result.livemode === false && result.scope === 'read_write' && /^acct_/.test(result.stripe_user_id), 'Stripe connection did not match sandbox access.', 409);
+      requireCondition(result.livemode === environment.live && result.scope === 'read_write' && /^acct_/.test(result.stripe_user_id), 'Stripe connection did not match this payment environment.', 409);
       requireCondition(!one('SELECT id FROM providers WHERE account_id=? AND id<>?', result.stripe_user_id, state.provider_id), 'This Stripe account is already linked to another provider.', 409);
       run('UPDATE providers SET account_id=?,account_kind=?,connected=1 WHERE id=?', result.stripe_user_id, 'oauth', state.provider_id);
       audit('existing_account_connected', state.provider_id);
@@ -221,11 +227,13 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
       }
       if (method === 'POST' && path === '/api/payment/checkout') {
         requireStripe();
+        requireCondition(!environment.live || config.livePaymentsEnabled === true, 'Payments are not open yet. Please contact BMS.', 503);
         requireCondition(j.approved && ['approved', 'checkout_open'].includes(j.status), 'Your provider is finalizing this quote. Please contact BMS.', 409);
         const p = one('SELECT * FROM providers WHERE id=?', j.provider_id);
         requireCondition(await refreshProvider(p), 'Your provider is completing payment setup. Please contact BMS.', 409);
         if (j.checkout_id) {
           const existing = await stripe.checkout.sessions.retrieve(j.checkout_id, {}, { stripeAccount: p.account_id });
+          requireCondition(existing.livemode === environment.live, 'Unexpected Stripe payment mode.', 502);
           requireCondition(existing.status === 'open', 'This checkout has been completed or expired. Please contact BMS.', 409);
           return json({ url: existing.url });
         }
@@ -234,7 +242,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
         const params = JSON.parse(one('SELECT checkout_params FROM jobs WHERE id=?', j.id).checkout_params);
         requireCondition(params.expires_at * 1000 > now() + 60000, 'This checkout invitation has expired. Please contact BMS for a refreshed quote.', 409);
         const session = await stripe.checkout.sessions.create(params, { stripeAccount: p.account_id, idempotencyKey: 'bms-checkout-' + j.id });
-        requireCondition(session.livemode === false, 'Unexpected Stripe payment mode.', 502);
+        requireCondition(session.livemode === environment.live, 'Unexpected Stripe payment mode.', 502);
         run("UPDATE jobs SET checkout_id=?,checkout_url=?,status=CASE WHEN paid IS NULL THEN 'checkout_open' ELSE status END WHERE id=?", session.id, session.url, j.id);
         audit('checkout_created', j.id);
         return json({ url: session.url });
@@ -245,7 +253,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
       let event;
       try { event = stripe.webhooks.constructEvent(Buffer.from(await request.arrayBuffer()), request.headers.get('stripe-signature'), config.webhookSecret); }
       catch { return json({ error: 'Invalid webhook signature.' }, 400); }
-      requireCondition(event.livemode === false, 'Live events are not accepted by this sandbox.', 400);
+      requireCondition(event.livemode === environment.live, 'Stripe event mode does not match this service.', 400);
       if (one('SELECT id FROM webhook_events WHERE id=?', event.id)) return json({ received: true });
       const object = event.data.object;
       let payment;
@@ -256,7 +264,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
         if (provider && typeof object.payment_intent === 'string') {
           const pi = await stripe.paymentIntents.retrieve(object.payment_intent, {}, { stripeAccount: event.account });
           const j = one('SELECT * FROM jobs WHERE id=? AND provider_id=?', pi.metadata?.bms_job_id || '', provider.id);
-          if (j && pi.livemode === false && pi.amount_received === j.amount && pi.application_fee_amount === j.fee) adjustmentJob = j.id;
+          if (j && pi.livemode === environment.live && pi.amount_received === j.amount && pi.application_fee_amount === j.fee) adjustmentJob = j.id;
         }
       }
       if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type) && object.payment_status === 'paid') {
@@ -264,7 +272,7 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
         if (j) {
           requireCondition(j.approved && j.connected === 1 && event.account === j.account_id && object.id === j.checkout_id && object.client_reference_id === j.id && object.amount_total === j.amount && object.currency === 'usd', 'Payment does not match the approved quote.', 409);
           const pi = await stripe.paymentIntents.retrieve(object.payment_intent, {}, { stripeAccount: j.account_id });
-          requireCondition(pi.livemode === false && pi.status === 'succeeded' && pi.amount_received === j.amount && pi.currency === 'usd' && pi.application_fee_amount === j.fee && pi.metadata?.bms_job_id === j.id, 'Payment fee verification failed.', 409);
+          requireCondition(pi.livemode === environment.live && pi.status === 'succeeded' && pi.amount_received === j.amount && pi.currency === 'usd' && pi.application_fee_amount === j.fee && pi.metadata?.bms_job_id === j.id, 'Payment fee verification failed.', 409);
           payment = { job: j.id, intent: pi.id, email: validEmail(object.customer_details?.email) ? object.customer_details.email : null };
         }
       }
@@ -287,7 +295,11 @@ export function createApp({ db, stripe, oauthStripe = stripe, config, now = Date
       return json({ received: true });
     }
     const files = { '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
-    if (method === 'GET' && files[path]) return new Response(await readFile(new URL(files[path][0], PUBLIC)), { headers: { 'Content-Type': files[path][1] + '; charset=utf-8' } });
+    if (method === 'GET' && files[path]) {
+      let content = await readFile(new URL(files[path][0], PUBLIC));
+      if (files[path][0] === 'index.html' && environment.live) content = content.toString().replace('SANDBOX PREVIEW', config.livePaymentsEnabled ? 'PROVIDER NETWORK' : 'PAYMENTS SETUP');
+      return new Response(content, { headers: { 'Content-Type': files[path][1] + '; charset=utf-8' } });
+    }
     return json({ error: 'Not found.' }, 404);
   }
   return async request => {
