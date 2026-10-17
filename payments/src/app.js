@@ -4,6 +4,7 @@ import { accountReady, checkoutParams, equal, hash, quote, requireCondition, tex
 import { createNotifications, validEmail } from './notifications.js';
 import { bindEnvironment } from './environment.js';
 import { createRoomRoutes } from './rooms.js';
+import { createConsultingRoutes } from './consulting.js';
 
 const DAY = 86400000;
 const PUBLIC = new URL('../public/', import.meta.url);
@@ -58,9 +59,12 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
     return session.customer_details.email;
   }
   const roomRoutes = createRoomRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, now });
+  const consultingRoutes = createConsultingRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, now });
   const loginAttempts = new Map();
   async function route(request) {
     const url = new URL(request.url), path = url.pathname, method = request.method;
+    const consultingResponse = await consultingRoutes(request);
+    if (consultingResponse) return consultingResponse;
     const roomResponse = await roomRoutes(request);
     if (roomResponse) return roomResponse;
     if (method === 'POST' && path !== '/api/webhooks/stripe') {
@@ -298,7 +302,7 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       return json({ received: true });
     }
-    const files = { '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/room-return.js': ['room-return.js', 'text/javascript'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/consulting-portal': ['consulting-portal.html', 'text/html'], '/consulting-admin': ['consulting-admin.html', 'text/html'], '/consulting-portal.js': ['consulting-portal.js', 'text/javascript'], '/consulting-admin.js': ['consulting-admin.js', 'text/javascript'], '/consulting.css': ['consulting.css', 'text/css'], '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/room-return.js': ['room-return.js', 'text/javascript'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     if (method === 'GET' && files[path]) {
       let content = await readFile(new URL(files[path][0], PUBLIC));
       if (files[path][0] === 'index.html' && environment.live) content = content.toString().replace('SANDBOX PREVIEW', config.livePaymentsEnabled ? 'PROVIDER NETWORK' : 'PAYMENTS SETUP');

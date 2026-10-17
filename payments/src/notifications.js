@@ -100,7 +100,7 @@ export function createNotifications({ db, config, now = Date.now, send = sendRes
     } finally { busy = false; }
   }
   // Each explicit test is a new message; retries still use its persisted row ID.
-  return { payment, appointment, flush, enabled, room: (id,kind,recipient,title,lines) => enqueue(null, 'room_'+id+'_'+kind, recipient, title, lines), test: () => enqueue(null, 'connection_test', config.adminEmail, 'Your BMS email connection is ready', ['Payment and appointment notifications can now be sent from your BMS service.'], randomInt(1, 2 ** 48 - 1)),
+  return { payment, appointment, flush, enabled, consulting: (id,kind,recipient,title,lines) => enqueue(null, 'consulting_'+id+'_'+kind, recipient, title, lines), room: (id,kind,recipient,title,lines) => enqueue(null, 'room_'+id+'_'+kind, recipient, title, lines), test: () => enqueue(null, 'connection_test', config.adminEmail, 'Your BMS email connection is ready', ['Payment and appointment notifications can now be sent from your BMS service.'], randomInt(1, 2 ** 48 - 1)),
     overview: () => ({ enabled: enabled(), from: config.emailFrom || '', adminEmail: config.adminEmail || '',
       counts: db.prepare('SELECT status,COUNT(*) AS count FROM notifications GROUP BY status').all(),
       recent: db.prepare('SELECT id,kind,recipient,status,error_code,created FROM notifications ORDER BY created DESC LIMIT 20').all() }) };
