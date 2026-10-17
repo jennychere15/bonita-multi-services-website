@@ -28,6 +28,19 @@ test('accepted payment emails survive worker restarts and repeated payment notif
   f.mail.payment('j'); await f.mail.flush(); assert.equal(f.sent.length, 3);
   assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE status='accepted'").get().n, 3);
 });
+
+test('explicit connection tests use distinct persisted identifiers across sandbox and live sends', async t => {
+  const f = setup(t);
+  f.mail.test(); await f.mail.flush();
+  f.config.paymentMode = 'live';
+  f.mail.test(); await f.mail.flush();
+  f.mail.test(); await f.mail.flush();
+  assert.equal(f.sent.length, 3);
+  assert.equal(new Set(f.sent.map(message => message.id)).size, 3);
+  assert.match(f.sent[0].payload.subject, /Sandbox/);
+  assert.doesNotMatch(f.sent[1].payload.subject, /Sandbox/);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE status='accepted'").get().n, 3);
+});
 test('ambiguous sends retry the identical message and idempotency key, then stop before key expiry', async t => {
   const f = setup(t), attempts = [];
   const mail = createNotifications({ db: f.db, config: f.config, now: f.now, send: async (payload, id) => {
