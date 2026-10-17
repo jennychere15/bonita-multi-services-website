@@ -58,3 +58,15 @@ test('Resend transport scopes credentials to its API, supplies idempotency and s
   await assert.rejects(sendResend(payload, 'id', 'key', async () => new Response('private error body', { status: 403 })), e => e.code === 'http_403' && e.retryable === false && !e.message.includes('private'));
   await assert.rejects(sendResend(payload, 'id', 'key', async () => new Response('', { status: 429 })), e => e.retryable === true);
 });
+
+test('live messages omit sandbox wording and send to real job recipients without the sandbox allowlist', async t => {
+  const f = setup(t); f.config.paymentMode = 'live'; f.config.emailAllowlist = [];
+  f.mail.payment('j'); f.mail.appointment('j');
+  for (let n = 0; n < 6; n++) await f.mail.flush();
+  assert.equal(f.sent.length, 6);
+  for (const { payload } of f.sent) {
+    assert.doesNotMatch(payload.subject + payload.text + payload.html, /Sandbox|no real payment/);
+    assert.match(payload.html, /Personal coordination/);
+  }
+  assert.deepEqual([...new Set(f.sent.map(s => s.payload.to[0]))].sort(), ['admin@example.com', 'customer@example.com', 'provider@example.com']);
+});
