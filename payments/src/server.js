@@ -3,8 +3,10 @@ import Stripe from 'stripe';
 import { openStore } from './store.js';
 import { createApp } from './app.js';
 import { createNotifications } from './notifications.js';
+import { validateDeployment } from './environment.js';
 
 const config = {
+  paymentMode: process.env.PAYMENT_MODE || 'sandbox', livePaymentsEnabled: process.env.LIVE_PAYMENTS_ENABLED === 'true',
   baseUrl: (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:4242').replace(/\/$/, ''),
   stripeKey: process.env.STRIPE_SECRET_KEY || '', clientId: process.env.STRIPE_CONNECT_CLIENT_ID || '',
   webhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '', adminToken: process.env.ADMIN_TOKEN || '',
@@ -14,24 +16,22 @@ const config = {
   emailAllowlist: (process.env.SANDBOX_EMAIL_ALLOWLIST || 'Admin@bonitamultiservices.com,admin+provider-test@bonitamultiservices.com').split(',').map(s => s.trim()).filter(Boolean)
 };
 if (config.adminToken.length < 32) throw new Error('Set ADMIN_TOKEN to a randomly generated value of at least 32 characters in the host secret manager.');
-const origin = new URL(config.baseUrl);
-if (origin.origin !== config.baseUrl || (origin.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(origin.hostname))) throw new Error('BASE_URL must be an HTTPS origin, or localhost for development.');
-if (config.stripeKey && !/^(sk|rk)_test_/.test(config.stripeKey)) throw new Error('This build accepts sandbox/test Stripe keys only. Live payments are disabled.');
+const oauthKey = process.env.STRIPE_OAUTH_SECRET_KEY || '';
+const environment = validateDeployment(config, oauthKey);
 const stripe = config.stripeKey ? new Stripe(config.stripeKey, { maxNetworkRetries: 0, timeout: 15000 }) : null;
 if (stripe) {
   const platform = await stripe.accounts.retrieve();
-  if (platform.id !== 'acct_1UQIaJ5uSGpjnhUc') throw new Error('The configured key does not belong to the approved BMS Provider Network sandbox.');
+  if (platform.id !== environment.platform) throw new Error('The configured key does not belong to the approved BMS Stripe environment.');
 }
 // OAuth can use a separate standard sandbox key; payment operations retain the restricted key.
-const oauthKey = process.env.STRIPE_OAUTH_SECRET_KEY || '';
-if (oauthKey && !oauthKey.startsWith('sk_test_')) throw new Error('STRIPE_OAUTH_SECRET_KEY must be a standard sandbox key.');
+
 const oauthStripe = oauthKey ? new Stripe(oauthKey, { maxNetworkRetries: 0, timeout: 15000 }) : stripe;
 if (oauthKey) {
   const oauthPlatform = await oauthStripe.accounts.retrieve();
-  if (oauthPlatform.id !== 'acct_1UQIaJ5uSGpjnhUc') throw new Error('OAuth key must belong to the approved BMS sandbox.');
+  if (oauthPlatform.id !== environment.platform) throw new Error('OAuth key must belong to the approved BMS Stripe environment.');
 }
 // An intentionally invalid code checks authentication without connecting an account.
-if (oauthStripe && config.clientId && process.env.BMS_OAUTH_DIAGNOSTIC === '1') {
+if (!environment.live && oauthStripe && config.clientId && process.env.BMS_OAUTH_DIAGNOSTIC === '1') {
   try { await oauthStripe.oauth.token({ grant_type: 'authorization_code', code: 'bms_invalid_diagnostic_code' }); }
   catch (error) {
     console.error('BMS sandbox OAuth credential check', JSON.stringify({
@@ -66,5 +66,5 @@ const server = http.createServer(async (req, res) => {
 });
 server.headersTimeout = 10000;
 server.requestTimeout = 20000;
-server.listen(Number(process.env.PORT || 4242), '0.0.0.0', () => console.log('BMS sandbox payment service is running.'));
+server.listen(Number(process.env.PORT || 4242), '0.0.0.0', () => console.log('BMS payment service is running in ' + environment.mode + ' mode; live checkout ' + (config.livePaymentsEnabled ? 'enabled' : 'paused') + '.'));
 process.on('SIGTERM', () => { clearInterval(emailTimer); server.close(() => process.exit(0)); });
