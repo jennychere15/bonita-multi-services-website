@@ -1,3 +1,7 @@
+# Production preparation
+
+Live deployment instructions and launch boundaries are in [PRODUCTION.md](PRODUCTION.md). The separate [production Blueprint](../render.production.yaml) starts with live checkout paused. Existing sandbox deployments retain sandbox mode by default. The code rejects mixed-mode keys, events and databases.
+
 # BMS Provider Network — sandbox payment service
 
 This service implements the provider-led arrangement Jennifer selected. It is separate from the public GitHub Pages website. It does not accept live Stripe keys and refuses keys belonging to another sandbox.
