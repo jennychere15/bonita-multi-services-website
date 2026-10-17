@@ -1,5 +1,5 @@
 // Explicit deployment mode and immutable database binding prevent test/live crossover.
-export const PLATFORMS = Object.freeze({ sandbox: 'acct_1UQIaJ5uSGpjnhUc', live: 'acct_1UQ8tWQhdCDcrQgc' });
+export const PLATFORMS = Object.freeze({ sandbox: 'acct_1UQIaJ5uSGpjnhUc', live: 'acct_1UQIZf9J1qJtAAYw' });
 export function deployment(config) {
   const mode = config.paymentMode || 'sandbox';
   if (!Object.hasOwn(PLATFORMS, mode)) throw new Error('PAYMENT_MODE must be sandbox or live.');
@@ -21,7 +21,18 @@ export function bindEnvironment(db, config) {
   db.exec('CREATE TABLE IF NOT EXISTS deployment_binding (singleton INTEGER PRIMARY KEY CHECK(singleton=1), mode TEXT NOT NULL, platform TEXT NOT NULL)');
   const current = db.prepare('SELECT * FROM deployment_binding WHERE singleton=1').get();
   if (current) {
-    if (current.mode !== env.mode || current.platform !== env.platform) throw new Error('Database belongs to a different Stripe environment. Use a separate production database.');
+    if (current.mode !== env.mode || current.platform !== env.platform) {
+      // Initial empty production setup used the general BMS account before the
+      // owner reconnected the dedicated Provider Network account. Never move records.
+      const empty = db.prepare('SELECT (SELECT COUNT(*) FROM providers)+(SELECT COUNT(*) FROM jobs)+(SELECT COUNT(*) FROM notifications) AS n').get().n === 0;
+      if (current.mode === 'live' && env.live && current.platform === 'acct_1UQ8tWQhdCDcrQgc' && env.platform === 'acct_1UQIZf9J1qJtAAYw' && empty) {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          db.prepare('UPDATE deployment_binding SET platform=? WHERE singleton=1').run(env.platform);
+          db.exec('DELETE FROM admin_sessions; DELETE FROM oauth_states; COMMIT');
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+      } else throw new Error('Database belongs to a different Stripe environment. Use a separate production database.');
+    }
   } else {
     // Existing unlabelled databases were created by the sandbox-only build.
     const records = db.prepare('SELECT (SELECT COUNT(*) FROM providers)+(SELECT COUNT(*) FROM jobs)+(SELECT COUNT(*) FROM notifications) AS n').get().n;
