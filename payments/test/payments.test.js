@@ -19,7 +19,7 @@ function fixture(overrides = {}) {
       accountLinks: { create: async (...args) => { calls.push(['link', ...args]); return { url: 'https://connect.stripe.com/setup/test' }; } } } },
     checkout: { sessions: {
       create: async (...args) => { calls.push(['checkout', ...args]); return { id: 'cs_test_bms', url: 'https://checkout.stripe.com/test', livemode: false }; },
-      retrieve: async () => ({ id: 'cs_test_bms', status: sessionStatus, url: 'https://checkout.stripe.com/test' })
+      retrieve: async () => ({ id: 'cs_test_bms', livemode: false, status: sessionStatus, url: 'https://checkout.stripe.com/test' })
     } },
     paymentIntents: { retrieve: async (...args) => { calls.push(['intent', ...args]); const j = db.prepare('SELECT * FROM jobs').get(); return {
       id: 'pi_test_bms', livemode: false, status: 'succeeded', amount_received: j.amount, currency: 'usd', application_fee_amount: j.fee, metadata: { bms_job_id: j.id }
@@ -257,4 +257,41 @@ test('earlier verified payments recover email from matching Stripe Checkout and 
   assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get().n, 3);
   f.db.prepare('UPDATE jobs SET refunded=30000').run();
   assert.equal((await f.request(path, { cookie, data })).r.status, 409);
+});
+
+
+test('live preparation shows the correct environment and blocks checkout before any Stripe call', async t => {
+  const f = fixture({ paymentMode: 'live', livePaymentsEnabled: false }); t.after(() => f.db.close());
+  const p = await f.provider(), j = await f.job(p); f.connect(p); await f.approve(j);
+  assert.equal((await f.request('/api/health')).result.mode, 'live');
+  assert.equal((await f.checkout(j)).r.status, 503);
+  assert.equal(f.calls.filter(x => x[0] === 'checkout').length, 0);
+  const html = (await f.request('/admin')).result;
+  assert.match(html, /PAYMENTS SETUP/); assert.doesNotMatch(html, /SANDBOX PREVIEW/);
+});
+test('live checkout and signed events require matching live objects; sandbox events cannot fulfill', async t => {
+  const f = fixture({ paymentMode: 'live', livePaymentsEnabled: true }); t.after(() => f.db.close());
+  const p = await f.provider(), j = await f.job(p); f.connect(p); await f.approve(j);
+  f.stripe.checkout.sessions.create = async () => ({ id: 'cs_live_bms', url: 'https://checkout.stripe.com/live', livemode: true });
+  f.stripe.paymentIntents.retrieve = async () => ({ id: 'pi_live_bms', livemode: true, status: 'succeeded', amount_received: 30000, currency: 'usd', application_fee_amount: 6500, metadata: { bms_job_id: j.id } });
+  await f.checkout(j);
+  const payload = { id: 'cs_live_bms', metadata: { bms_job_id: j.id }, client_reference_id: j.id, amount_total: 30000, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_live_bms' };
+  assert.equal((await f.event('checkout.session.completed', payload)).r.status, 400);
+  assert.equal(f.db.prepare('SELECT paid FROM jobs').get().paid, null);
+  assert.equal((await f.event('checkout.session.completed', payload, { live: true })).r.status, 200);
+  assert.ok(f.db.prepare('SELECT paid FROM jobs').get().paid);
+});
+test('live v2 providers need active v2 merchant capability and the agreed responsibilities', async t => {
+  const f = fixture({ paymentMode: 'live', livePaymentsEnabled: true }); t.after(() => f.db.close());
+  const p = await f.provider(), j = await f.job(p); f.connect(p); await f.approve(j);
+  f.db.prepare("UPDATE providers SET account_kind='v2'").run();
+  let v2 = { id: 'acct_provider', livemode: true, dashboard: 'full', identity: { country: 'us' }, defaults: { responsibilities: { fees_collector: 'stripe', losses_collector: 'stripe' } }, configuration: { merchant: { capabilities: { card_payments: { status: 'pending' } } } } };
+  f.stripe.v2.core.accounts.retrieve = async () => v2;
+  f.stripe.checkout.sessions.create = async () => ({ id: 'cs_live_bms', url: 'https://checkout.stripe.com/live', livemode: true });
+  assert.equal((await f.checkout(j)).r.status, 409);
+  v2.configuration.merchant.capabilities.card_payments.status = 'active';
+  v2.defaults.responsibilities.losses_collector = 'application';
+  assert.equal((await f.checkout(j)).r.status, 409);
+  v2.defaults.responsibilities.losses_collector = 'stripe';
+  assert.equal((await f.checkout(j)).r.status, 200);
 });
