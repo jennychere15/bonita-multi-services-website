@@ -18,11 +18,20 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
  db.exec(`CREATE TABLE IF NOT EXISTS room_bookings(id TEXT PRIMARY KEY,date TEXT NOT NULL,start INTEGER NOT NULL,end INTEGER NOT NULL,guests INTEGER NOT NULL,plan TEXT NOT NULL,amount INTEGER NOT NULL,name TEXT NOT NULL,email TEXT NOT NULL,phone TEXT NOT NULL,notes TEXT NOT NULL,status TEXT NOT NULL,checkout_id TEXT UNIQUE,checkout_url TEXT,checkout_params TEXT,payment_intent TEXT UNIQUE,created INTEGER NOT NULL);CREATE INDEX IF NOT EXISTS room_inventory ON room_bookings(date,status,start,end);CREATE TABLE IF NOT EXISTS room_events(id TEXT PRIMARY KEY,created INTEGER NOT NULL);`);
  const one=(s,...a)=>db.prepare(s).get(...a),run=(s,...a)=>db.prepare(s).run(...a),json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json'}});
  const clean=(v,n)=>typeof v==='string'?v.trim().slice(0,n):'';
- const ready=()=>Boolean(config.roomPaymentsEnabled&&config.roomStripeKey&&config.roomWebhookSecret&&stripe&&notifications.enabled());
+ const ready=()=>Boolean(config.roomPaymentsEnabled&&config.roomStripeKey&&config.roomWebhookSecret&&stripe);
  const conflict=r=>one("SELECT id FROM room_bookings WHERE date=? AND start<? AND end>? AND status IN ('held','processing','confirmed','blocked') AND id<>?",r.date,r.end,r.start,r.id||'');
  const describe=r=>`${r.date}, ${Math.floor(r.start/60)}:00–${Math.floor(r.end/60)}:00 Eastern · ${r.guests} guests · $${(r.amount/100).toFixed(2)}`;
  const notify=(r,kind,title,lines,to=config.adminEmail)=>notifications.room(r.id,kind,to,title,lines);
  const atomic=fn=>{db.exec('BEGIN IMMEDIATE');try{const value=fn();db.exec('COMMIT');return value;}catch(e){db.exec('ROLLBACK');throw e;}};
+ async function checkout(r){
+    if(r.checkout_id){const s=await stripe.checkout.sessions.retrieve(r.checkout_id);requireCondition(s.status==='open','This checkout is closed. Review the reservation.',409);return {url:r.checkout_url,sessionId:r.checkout_id};}
+    atomic(()=>{requireCondition(!conflict(r),'This time is no longer available.',409);run("UPDATE room_bookings SET status='held' WHERE id=?",r.id);});
+    // Keep inventory held on ambiguous network results; retry with the same idempotency key.
+    let params=r.checkout_params ? JSON.parse(r.checkout_params) : {mode:'payment',customer_email:r.email,client_reference_id:r.id,metadata:{bms_room_id:r.id},payment_intent_data:{metadata:{bms_room_id:r.id}},line_items:[{price_data:{currency:'usd',unit_amount:r.amount,product_data:{name:r.plan==='day'?'BMS Private Meeting Room — Full Day':'BMS Private Meeting Room — Hourly',description:describe(r)}},quantity:1}],expires_at:Math.floor(now()/1000)+1800,success_url:config.baseUrl+'/room-return?session_id={CHECKOUT_SESSION_ID}',cancel_url:config.baseUrl+'/room-return?cancelled=1&session_id={CHECKOUT_SESSION_ID}',integration_identifier:'bms_room_rentals_jthervil'};
+    if(!r.checkout_params){run('UPDATE room_bookings SET checkout_params=COALESCE(checkout_params,?) WHERE id=?',JSON.stringify(params),r.id);params=JSON.parse(one('SELECT checkout_params FROM room_bookings WHERE id=?',r.id).checkout_params);}
+    const s=await stripe.checkout.sessions.create(params,{idempotencyKey:'bms-room-'+r.id});
+    requireCondition(s.livemode===(config.paymentMode==='live'),'Unexpected Stripe environment.',502);run('UPDATE room_bookings SET checkout_id=?,checkout_url=? WHERE id=?',s.id,s.url,r.id);notify(r,'payment_link','Complete your room reservation',[describe(r),'Your time is temporarily held while this payment link is open. Complete payment to confirm: '+s.url,'Optional upgrades are quoted separately.'],r.email);return {url:s.url,sessionId:s.id};
+ }
  async function webhook(request){
   requireCondition(stripe&&config.roomWebhookSecret,'Payment connection unavailable.',503);
   let e;try{e=stripe.webhooks.constructEvent(Buffer.from(await request.arrayBuffer()),request.headers.get('stripe-signature'),config.roomWebhookSecret);}catch{return json({error:'Invalid signature.'},400);}
@@ -54,6 +63,19 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
    if(p==='/api/room/webhook'&&m==='POST')return await webhook(request);
    if(m==='POST')requireCondition(allowed,'Request origin is not allowed.',403);
    if(!pub)adminAuth(request);
+   if(p==='/api/room/cancel'&&m==='POST'){
+    requireCondition(stripe&&config.roomStripeKey,'Payment connection unavailable.',503);const i=await body(request),id=i.session_id||'';
+    requireCondition(/^cs_(live|test)_[A-Za-z0-9_]{8,255}$/.test(id),'Invalid checkout reference.');
+    const r=one('SELECT * FROM room_bookings WHERE checkout_id=?',id);requireCondition(r&&['held','expired'].includes(r.status),'Only an unpaid checkout hold can be released.',409);
+    let session=await stripe.checkout.sessions.retrieve(id);requireCondition(session.livemode===(config.paymentMode==='live'),'Unexpected payment environment.',409);
+    if(session.status==='open')session=await stripe.checkout.sessions.expire(id,{},{idempotencyKey:'room-expire-'+r.id});
+    requireCondition(session.status==='expired','Payment is already complete or processing. Contact BMS for changes.',409);
+    run("UPDATE room_bookings SET status='expired' WHERE id=? AND status='held'",r.id);return cors(json({released:true}));
+   }
+   if(p==='/api/room/status'&&m==='GET'){
+    const id=u.searchParams.get('session_id')||'';requireCondition(/^cs_(live|test)_[A-Za-z0-9_]{8,255}$/.test(id),'Invalid checkout reference.');
+    const r=one('SELECT id,date,start,end,guests,amount,status FROM room_bookings WHERE checkout_id=?',id);requireCondition(r,'Reservation not found.',404);return cors(json(r));
+   }
    if(p==='/api/room/availability'&&m==='GET'){
     const date=u.searchParams.get('date');requireCondition(/^\d{4}-\d{2}-\d{2}$/.test(date||''),'Choose a date.');
     return cors(json({date,timezone:'America/New_York',openingDate:'2026-11-15',opens:360,closes:1080,requestsEnabled:Boolean(config.roomRequestsEnabled),paymentReady:ready(),busy:db.prepare("SELECT start,end FROM room_bookings WHERE date=? AND status IN ('held','processing','confirmed','blocked') ORDER BY start").all(date)}));
@@ -66,6 +88,7 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
     requireCondition(one('SELECT COUNT(*) AS n FROM room_bookings WHERE email=? AND created>?',email,now()-3600000).n<5,'Please contact BMS to update your request.',429);
     requireCondition(one('SELECT COUNT(*) AS n FROM room_bookings WHERE created>?',now()-60000).n<10,'Please try again shortly or call BMS.',429);
     const id=randomUUID();atomic(()=>{run("INSERT INTO room_bookings(id,date,start,end,guests,plan,amount,name,email,phone,notes,status,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",id,q.date,q.start,q.end,q.guests,q.plan,q.amount,name,email,phone,notes,'requested',now());const r=one('SELECT * FROM room_bookings WHERE id=?',id);notify(r,'request_admin','Meeting room request',[describe(r),`${name} · ${email} · ${phone}`,notes,`Review: ${config.baseUrl}/room-admin`]);notify(r,'request_customer','We received your meeting room request',[describe(r),'This is a request, not a confirmed reservation. BMS will check availability and send payment instructions. Optional upgrades require a separate quote.'],email);});
+    if(i.payNow===true && ready()){const payment=await checkout(one('SELECT * FROM room_bookings WHERE id=?',id));return cors(json({id,status:'held',checkoutUrl:payment.url,checkoutSessionId:payment.sessionId},201));}
     return cors(json({id,status:'requested',message:'Your request was received. BMS will confirm availability and send payment instructions.'},201));
    }
    if(p==='/api/admin/room/overview'&&m==='GET')return json({paymentReady:ready(),requestsEnabled:Boolean(config.roomRequestsEnabled),bookings:db.prepare('SELECT id,date,start,end,guests,plan,amount,name,email,phone,notes,status,checkout_url FROM room_bookings ORDER BY date,start,created LIMIT 500').all()});
@@ -78,13 +101,7 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
    if(p==='/api/admin/room/checkout'&&m==='POST'){
     requireCondition(ready(),'Connect the BMS direct-service Stripe key and room webhook first.',503);
     const i=await body(request),r=one('SELECT * FROM room_bookings WHERE id=?',i.id||'');requireCondition(r&&['requested','held'].includes(r.status),'Choose an unpaid request.',409);
-    if(r.checkout_id){const s=await stripe.checkout.sessions.retrieve(r.checkout_id);requireCondition(s.status==='open','This checkout is closed. Review the reservation.',409);return json({url:r.checkout_url});}
-    atomic(()=>{requireCondition(!conflict(r),'This time is no longer available.',409);run("UPDATE room_bookings SET status='held' WHERE id=?",r.id);});
-    // Keep inventory held on ambiguous network results; retry with the same idempotency key.
-    let params=r.checkout_params ? JSON.parse(r.checkout_params) : {mode:'payment',customer_email:r.email,client_reference_id:r.id,metadata:{bms_room_id:r.id},payment_intent_data:{metadata:{bms_room_id:r.id}},line_items:[{price_data:{currency:'usd',unit_amount:r.amount,product_data:{name:r.plan==='day'?'BMS Private Meeting Room — Full Day':'BMS Private Meeting Room — Hourly',description:describe(r)}},quantity:1}],expires_at:Math.floor(now()/1000)+1800,success_url:config.baseUrl+'/room-return',cancel_url:config.baseUrl+'/room-return?cancelled=1',integration_identifier:'bms_room_rentals_jthervil'};
-    if(!r.checkout_params){run('UPDATE room_bookings SET checkout_params=COALESCE(checkout_params,?) WHERE id=?',JSON.stringify(params),r.id);params=JSON.parse(one('SELECT checkout_params FROM room_bookings WHERE id=?',r.id).checkout_params);}
-    const s=await stripe.checkout.sessions.create(params,{idempotencyKey:'bms-room-'+r.id});
-    requireCondition(s.livemode===(config.paymentMode==='live'),'Unexpected Stripe environment.',502);run('UPDATE room_bookings SET checkout_id=?,checkout_url=? WHERE id=?',s.id,s.url,r.id);notify(r,'payment_link','Complete your room reservation',[describe(r),'Your time is temporarily held while this payment link is open. Complete payment to confirm: '+s.url,'Optional upgrades are quoted separately.'],r.email);return json({url:s.url});
+    return json(await checkout(r));
    }
    return json({error:'Not found.'},404);
   }catch(e){return cors(json({error:(e.status||500)<500?e.message:'This service is not ready right now. Please contact BMS.'},e.status||500));}

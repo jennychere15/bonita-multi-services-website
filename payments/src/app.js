@@ -298,7 +298,7 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       return json({ received: true });
     }
-    const files = { '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/room-return.js': ['room-return.js', 'text/javascript'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     if (method === 'GET' && files[path]) {
       let content = await readFile(new URL(files[path][0], PUBLIC));
       if (files[path][0] === 'index.html' && environment.live) content = content.toString().replace('SANDBOX PREVIEW', config.livePaymentsEnabled ? 'PROVIDER NETWORK' : 'PAYMENTS SETUP');
