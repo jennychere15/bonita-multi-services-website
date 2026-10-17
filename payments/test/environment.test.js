@@ -30,3 +30,15 @@ test('an unlabelled sandbox database with historical records cannot become live'
   bindEnvironment(db, config);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM providers').get().n, 1);
 });
+
+
+test('dedicated network account correction is allowed only before production has any provider or payment records', t => {
+  const db = openStore(); t.after(() => db.close());
+  db.exec("CREATE TABLE deployment_binding (singleton INTEGER PRIMARY KEY, mode TEXT, platform TEXT); INSERT INTO deployment_binding VALUES(1,'live','acct_1UQ8tWQhdCDcrQgc'); INSERT INTO admin_sessions VALUES('old',999999)");
+  bindEnvironment(db, { paymentMode: 'live' });
+  assert.equal(db.prepare('SELECT platform FROM deployment_binding').get().platform, PLATFORMS.live);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM admin_sessions').get().n, 0);
+  db.prepare("INSERT INTO providers(id,name,email,invite_hash,expires,created) VALUES('real','Provider','real@example.com','hash',1,1)").run();
+  db.prepare("UPDATE deployment_binding SET platform='acct_1UQ8tWQhdCDcrQgc'").run();
+  assert.throws(() => bindEnvironment(db, { paymentMode: 'live' }));
+});
