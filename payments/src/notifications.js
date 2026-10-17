@@ -25,12 +25,14 @@ export function createNotifications({ db, config, now = Date.now, send = sendRes
     if (!validEmail(recipient)) return;
     recipient = recipient.toLowerCase();
     const id = 'bms-' + createHash('sha256').update(JSON.stringify([jobId, kind, recipient, version])).digest('hex');
-    const heading = '[Sandbox] ' + title;
+    const live = config.paymentMode === 'live';
+    const heading = (live ? '' : '[Sandbox] ') + title;
+    const footer = live ? 'Personal coordination. Exceptional service.' : 'Sandbox test — no real payment or appointment.';
     const payload = {
       from: config.emailFrom || 'Bonita Multi-Services <notifications@updates.bonitamultiservices.com>',
       to: [recipient], reply_to: config.adminEmail || 'Admin@bonitamultiservices.com', subject: heading,
-      text: [heading, ...paragraphs, 'Bonita Multi-Services', 'Sandbox test — no real payment or appointment.'].join('\n\n'),
-      html: `<div style="background:#f8f5ef;padding:32px;font-family:Arial,sans-serif;color:#12324a"><div style="max-width:600px;margin:auto;background:#fff;padding:32px;border-radius:12px"><p style="letter-spacing:3px;color:#8a6a2c">BONITA MULTI-SERVICES</p><h1 style="font-family:Georgia,serif">${escape(title)}</h1>${paragraphs.map(p => `<p style="line-height:1.7;white-space:pre-line">${escape(p)}</p>`).join('')}<p style="font-size:12px;color:#64748b">Sandbox test — no real payment or appointment.</p></div></div>`
+      text: [heading, ...paragraphs, 'Bonita Multi-Services', footer].join('\n\n'),
+      html: `<div style="background:#f8f5ef;padding:32px;font-family:Arial,sans-serif;color:#12324a"><div style="max-width:600px;margin:auto;background:#fff;padding:32px;border-radius:12px"><p style="letter-spacing:3px;color:#8a6a2c">BONITA MULTI-SERVICES</p><h1 style="font-family:Georgia,serif">${escape(title)}</h1>${paragraphs.map(p => `<p style="line-height:1.7;white-space:pre-line">${escape(p)}</p>`).join('')}<p style="font-size:12px;color:#64748b">${escape(footer)}</p></div></div>`
     };
     run('INSERT OR IGNORE INTO notifications(id,job_id,kind,version,recipient,payload,next_attempt,created) VALUES(?,?,?,?,?,?,?,?)', id, jobId, kind, version, recipient, JSON.stringify(payload), now(), now());
   }
@@ -71,7 +73,7 @@ export function createNotifications({ db, config, now = Date.now, send = sendRes
         run("UPDATE notifications SET status='cancelled',error_code='superseded' WHERE id=?", row.id); return;
       }
       const allowed = (config.emailAllowlist || []).map(e => e.toLowerCase());
-      if (!allowed.includes(row.recipient)) { run("UPDATE notifications SET status='blocked',error_code='sandbox_recipient' WHERE id=?", row.id); return; }
+      if (config.paymentMode !== 'live' && !allowed.includes(row.recipient)) { run("UPDATE notifications SET status='blocked',error_code='sandbox_recipient' WHERE id=?", row.id); return; }
       // Resend retains idempotency keys for 24 hours. Stop ambiguous retries before that window ends.
       if (row.first_attempt && now() - row.first_attempt >= 23 * 3600000) {
         run("UPDATE notifications SET status='review',error_code='retry_window' WHERE id=?", row.id); return;
