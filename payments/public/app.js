@@ -146,6 +146,8 @@ async function admin() {
   }
 }
 async function start() {
+  const environment = await api('/api/health', undefined, false);
+  if (environment.mode === 'live') document.querySelector('.badge').textContent = environment.livePaymentsEnabled ? 'PROVIDER NETWORK' : 'PAYMENTS SETUP';
   if (path === '/admin') return admin();
   if (path === '/provider') return provider();
   if (path === '/approve') return approve();
