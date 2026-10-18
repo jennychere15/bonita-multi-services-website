@@ -6,6 +6,7 @@ import { createNotifications } from './notifications.js';
 import { validateDeployment } from './environment.js';
 
 const config = {
+  notaryPaymentsEnabled: process.env.NOTARY_PAYMENTS_ENABLED === 'true', notarySubscriptionsEnabled: process.env.NOTARY_SUBSCRIPTIONS_ENABLED === 'true',
   roomRequestsEnabled: process.env.ROOM_REQUESTS_ENABLED === 'true', roomPaymentsEnabled: process.env.ROOM_PAYMENTS_ENABLED === 'true',
   roomStripeKey: process.env.ROOM_STRIPE_SECRET_KEY || '', roomWebhookSecret: process.env.ROOM_STRIPE_WEBHOOK_SECRET || '',
   paymentMode: process.env.PAYMENT_MODE || 'sandbox', livePaymentsEnabled: process.env.LIVE_PAYMENTS_ENABLED === 'true',

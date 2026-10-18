@@ -5,6 +5,7 @@ import { createNotifications, validEmail } from './notifications.js';
 import { bindEnvironment } from './environment.js';
 import { createRoomRoutes } from './rooms.js';
 import { createConsultingRoutes } from './consulting.js';
+import { createNotaryRoutes } from './notary.js';
 
 const DAY = 86400000;
 const PUBLIC = new URL('../public/', import.meta.url);
@@ -59,10 +60,13 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
     return session.customer_details.email;
   }
   const roomRoutes = createRoomRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, now });
+  const notaryRoutes = createNotaryRoutes({db,stripe,directStripe:roomStripe,config,adminAuth,body,notifications,refreshProvider,now});
   const consultingRoutes = createConsultingRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, now });
   const loginAttempts = new Map();
   async function route(request) {
     const url = new URL(request.url), path = url.pathname, method = request.method;
+    const notaryResponse = await notaryRoutes(request);
+    if (notaryResponse) return notaryResponse;
     const consultingResponse = await consultingRoutes(request);
     if (consultingResponse) return consultingResponse;
     const roomResponse = await roomRoutes(request);
@@ -235,8 +239,9 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
       }
       if (method === 'POST' && path === '/api/payment/checkout') {
         requireStripe();
-        requireCondition(!environment.live || config.livePaymentsEnabled === true, 'Payments are not open yet. Please contact BMS.', 503);
+        requireCondition(!environment.live || (j.tier === 'notary' ? config.notaryPaymentsEnabled === true : config.livePaymentsEnabled === true), 'Payments are not open yet. Please contact BMS.', 503);
         requireCondition(j.approved && ['approved', 'checkout_open'].includes(j.status), 'Your provider is finalizing this quote. Please contact BMS.', 409);
+        if(j.tier==='notary'){const v=one('SELECT status,expires FROM notary_vendors WHERE provider_id=?',j.provider_id);requireCondition(v?.status==='Approved'&&Date.parse(v.expires+'T23:59:59Z')>now(),'The assigned notary must have current BMS approval.',409);}
         const p = one('SELECT * FROM providers WHERE id=?', j.provider_id);
         requireCondition(await refreshProvider(p), 'Your provider is completing payment setup. Please contact BMS.', 409);
         if (j.checkout_id) {
@@ -302,7 +307,7 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       return json({ received: true });
     }
-    const files = { '/client-portal': ['consulting-portal.html', 'text/html'], '/notary-portal': ['consulting-portal.html', 'text/html'], '/notary-admin': ['consulting-admin.html', 'text/html'], '/consulting-portal': ['consulting-portal.html', 'text/html'], '/consulting-admin': ['consulting-admin.html', 'text/html'], '/consulting-portal.js': ['consulting-portal.js', 'text/javascript'], '/consulting-admin.js': ['consulting-admin.js', 'text/javascript'], '/consulting.css': ['consulting.css', 'text/css'], '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/room-return.js': ['room-return.js', 'text/javascript'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/notary-book': ['notary-book.html','text/html'], '/notary-vendor': ['notary-vendor.html','text/html'], '/notary-network.js': ['notary-network.js','text/javascript'], '/notary-network.css': ['notary-network.css','text/css'], '/client-portal': ['consulting-portal.html', 'text/html'], '/notary-portal': ['notary-portal.html', 'text/html'], '/notary-admin': ['notary-admin.html', 'text/html'], '/consulting-portal': ['consulting-portal.html', 'text/html'], '/consulting-admin': ['consulting-admin.html', 'text/html'], '/consulting-portal.js': ['consulting-portal.js', 'text/javascript'], '/consulting-admin.js': ['consulting-admin.js', 'text/javascript'], '/consulting.css': ['consulting.css', 'text/css'], '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/room-return.js': ['room-return.js', 'text/javascript'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     if (method === 'GET' && files[path]) {
       let content = await readFile(new URL(files[path][0], PUBLIC));
       if (files[path][0] === 'index.html' && environment.live) content = content.toString().replace('SANDBOX PREVIEW', config.livePaymentsEnabled ? 'PROVIDER NETWORK' : 'PAYMENTS SETUP');
