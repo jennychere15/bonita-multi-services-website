@@ -295,3 +295,20 @@ test('live v2 providers need active v2 merchant capability and the agreed respon
   v2.defaults.responsibilities.losses_collector = 'stripe';
   assert.equal((await f.checkout(j)).r.status, 200);
 });
+
+test('all-service notary network checkout itemizes government pass-through and settles only the assigned connected account',async()=>{
+ const f=fixture({notaryPaymentsEnabled:true}),cookie=await f.login(),p=await f.provider();f.connect(p);
+ f.db.prepare("INSERT INTO notary_vendors(id,name,email,phone,commission,expires,counties,services,notes,status,verified,provider_id,created) VALUES('vendor-notary','Notary','provider@example.com','2395550100','HH123','2028-10-01','Lee','Office, online, apostille','','Approved','Verified',?,?)").run(p.id,Date.now());
+ const {r,result:q}=await f.request('/api/notary/book',{data:{name:'Client',email:'client@example.com',phone:'2395550111',company:'Firm',kind:'apostille',acts:1,location:'Bonita Springs',origin:'Florida',destination:'France',copyStatus:'Certified original',floridaDocuments:true,consent:true,terms:true}});assert.equal(r.status,201);
+ const assigned=await f.request('/api/admin/notary/assign',{cookie,data:{id:q.id,vendorId:'vendor-notary'}});assert.equal(assigned.r.status,200,JSON.stringify(assigned.result));
+ const vendorToken='notary-vendor-session';f.db.prepare("INSERT INTO notary_sessions VALUES(?,?,?,?)").run(hash(vendorToken),'provider@example.com','vendor',Date.now()+60000);
+ assert.equal((await f.request('/api/notary/vendor/accept',{cookie:'bms_notary='+vendorToken,data:{jobId:assigned.result.jobId,accept:true}})).r.status,200);
+ const next=await f.request('/api/notary/request/pay',{token:new URL(q.url).hash.split('request=')[1],data:{}});assert.equal(next.r.status,200);
+ const payment=new URL(next.result.url).hash.slice(1),out=await f.checkout({payment});assert.equal(out.r.status,200,JSON.stringify(out.result));
+ const call=f.calls.find(x=>x[0]==='checkout'),params=call[1];assert.equal(call[2].stripeAccount,'acct_provider');assert.equal(params.payment_intent_data.application_fee_amount,6250);assert.deepEqual(params.line_items.map(x=>x.price_data.unit_amount),[15000,1000]);
+ const j=f.db.prepare('SELECT * FROM jobs').get();assert.equal(j.amount-j.fee,9750);
+ const object={id:'cs_test_bms',client_reference_id:j.id,amount_total:16000,currency:'usd',payment_status:'paid',payment_intent:'pi_test_bms',metadata:{bms_job_id:j.id}};
+ assert.equal((await f.event('checkout.session.completed',object,{accountId:'acct_wrong'})).r.status,409);
+ assert.equal((await f.event('checkout.session.completed',object)).r.status,200);
+ assert.equal(f.db.prepare('SELECT paid FROM jobs').get().paid!==null,true);
+});

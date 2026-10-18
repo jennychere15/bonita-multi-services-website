@@ -120,6 +120,7 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
         requireCondition(j.paid && j.refunded === 0 && !j.dispute_status, 'Only paid requests without a refund or dispute can be scheduled.', 409);
         const appointmentAt = text(input.appointmentAt, 40), time = Date.parse(appointmentAt);
         requireCondition(/Z$/.test(appointmentAt) && Number.isFinite(time) && time > now() && time < now() + 366 * DAY, 'Choose a future appointment within the next year.');
+        if(j.tier==='notary'){const q=one('SELECT kind FROM notary_requests WHERE job_id=?',j.id);if(q?.kind==='office'){const p=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',weekday:'short',hour:'2-digit',hourCycle:'h23'}).formatToParts(new Date(time)).map(x=>[x.type,x.value]));requireCondition(!['Sat','Sun'].includes(p.weekday)&&Number(p.hour)>=10&&Number(p.hour)<16,'Office appointments are Monday–Friday, 10 AM–4 PM Eastern.');}}
         const location = text(input.location, 500), notes = input.notes ? text(input.notes, 1000) : '';
         requireCondition(Number.isSafeInteger(input.version) && input.version === j.appointment_version, 'This appointment changed. Refresh the page before saving.', 409);
         // Earlier sandbox payments predate email collection; recover from their verified Stripe session.
@@ -251,7 +252,9 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
           return json({ url: existing.url });
         }
         // Persist exact parameters before the network request. Retries and concurrent requests share the same Stripe idempotency key and payload.
-        run('UPDATE jobs SET checkout_params=COALESCE(checkout_params,?) WHERE id=?', JSON.stringify(checkoutParams(j, config.baseUrl)), j.id);
+        const paymentParams=checkoutParams(j, config.baseUrl);
+        if(j.tier==='notary'){const q=one('SELECT service_total,government FROM notary_requests WHERE job_id=?',j.id);requireCondition(q,'Notary service pricing is unavailable.',409);paymentParams.line_items=[{quantity:1,price_data:{currency:'usd',unit_amount:q.service_total,product_data:{name:j.title,description:'Notary network service subtotal. BMS confirms scheduling separately.'}}},...(q.government?[{quantity:1,price_data:{currency:'usd',unit_amount:q.government,product_data:{name:'Government fees',description:'Pass-through funds collected for BMS to submit to the issuing authority; excluded from the service revenue split.'}}}]:[])];}
+        run('UPDATE jobs SET checkout_params=COALESCE(checkout_params,?) WHERE id=?', JSON.stringify(paymentParams), j.id);
         const params = JSON.parse(one('SELECT checkout_params FROM jobs WHERE id=?', j.id).checkout_params);
         requireCondition(params.expires_at * 1000 > now() + 60000, 'This checkout invitation has expired. Please contact BMS for a refreshed quote.', 409);
         const session = await stripe.checkout.sessions.create(params, { stripeAccount: p.account_id, idempotencyKey: 'bms-checkout-' + j.id });
