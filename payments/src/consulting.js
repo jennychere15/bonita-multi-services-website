@@ -22,7 +22,7 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
  const mail=(id,kind,email,title,lines)=>notifications.consulting(id,kind,email,title,lines);
  function login(email){
   const t=token();run('INSERT INTO consulting_access VALUES(?,?,?,0)',hash(t),email,now()+15*60000);
-  mail(randomUUID(),'access',email,'Your private BMS client portal link',[`Open your private portal within 15 minutes: ${config.baseUrl}/consulting-portal#access=${t}`,'This link can be used once. Do not forward it. If you did not request it, you can ignore this email.']);
+  mail(randomUUID(),'access',email,'Your private BMS client portal link',[`Open your private portal within 15 minutes: ${config.baseUrl}/client-portal#access=${t}`,'This link can be used once. Do not forward it. If you did not request it, you can ignore this email.']);
  }
  function client(request){
   const value=request.headers.get('cookie')?.split(';').map(s=>s.trim()).find(s=>s.startsWith('bms_consulting='))?.slice(15)||'';
@@ -46,8 +46,8 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
   let params=invoice.checkout_params?JSON.parse(invoice.checkout_params):{
    mode:'payment',customer_email:p.email,client_reference_id:invoice.id,
    metadata:{bms_consulting_invoice:invoice.id},payment_intent_data:{metadata:{bms_consulting_invoice:invoice.id}},
-   line_items:[{quantity:1,price_data:{currency:'usd',unit_amount:invoice.amount,product_data:{name:'BMS Consulting — '+invoice.title,description:invoice.scope.slice(0,450)}}}],
-   expires_at:Math.floor(now()/1000)+86400,success_url:config.baseUrl+'/consulting-portal?payment=received',cancel_url:config.baseUrl+'/consulting-portal?payment=cancelled',
+   line_items:[{quantity:1,price_data:{currency:'usd',unit_amount:invoice.amount,product_data:{name:(p.service.startsWith('Notary & Apostille')?'BMS Notary & Apostille — ':'BMS Consulting — ')+invoice.title,description:invoice.scope.slice(0,450)}}}],
+   expires_at:Math.floor(now()/1000)+86400,success_url:config.baseUrl+'/client-portal?payment=received',cancel_url:config.baseUrl+'/client-portal?payment=cancelled',
    integration_identifier:'bms_consulting_'+Array.from(randomBytes(8),b=>String.fromCharCode(97+b%26)).join('')
   };
   if(!invoice.checkout_params){run('UPDATE consulting_invoices SET checkout_params=COALESCE(checkout_params,?) WHERE id=?',JSON.stringify(params),invoice.id);params=JSON.parse(one('SELECT checkout_params FROM consulting_invoices WHERE id=?',invoice.id).checkout_params);}
@@ -71,16 +71,16 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
     if(s.payment_status==='paid'&&r.status!=='paid'){
      requireCondition(typeof s.payment_intent==='string'&&s.payment_intent.startsWith('pi_'),'Payment reference missing.',409);
      run("UPDATE consulting_invoices SET status='paid',payment_intent=? WHERE id=?",s.payment_intent,r.id);
-     const p=project(r.project_id),lines=[`${r.title}: $${(r.amount/100).toFixed(2)} paid.`,r.scope,`Project: ${p.company||p.name}\nReference: ${r.id}`,`View your project: ${config.baseUrl}/consulting-portal`];
-     mail(r.id,'paid_customer',p.email,'Your consulting payment is confirmed',lines);
-     mail(r.id,'paid_admin',config.adminEmail,'Consulting payment received',[...lines,`${p.name} · ${p.email}`,`Manage: ${config.baseUrl}/consulting-admin`]);
+     const p=project(r.project_id),lines=[`${r.title}: $${(r.amount/100).toFixed(2)} paid.`,r.scope,`Project: ${p.company||p.name}\nReference: ${r.id}`,`View your project: ${config.baseUrl}/client-portal`];
+     mail(r.id,'paid_customer',p.email,'Your BMS payment is confirmed',lines);
+     mail(r.id,'paid_admin',config.adminEmail,'BMS client payment received',[...lines,`${p.name} · ${p.email}`,`Manage: ${config.baseUrl}/consulting-admin`]);
     }else if(r.status!=='paid')run("UPDATE consulting_invoices SET status='processing' WHERE id=?",r.id);
    }else if(r.status!=='paid')run("UPDATE consulting_invoices SET status='due' WHERE id=?",r.id);
    run('INSERT INTO consulting_events VALUES(?,?)',e.id,now());
   });return json({received:true});
  }
  return async request=>{
-  const u=new URL(request.url),path=u.pathname,m=request.method;
+  const u=new URL(request.url),notaryInquiry=u.pathname==='/api/notary/inquiries',path=notaryInquiry?'/api/consulting/inquiries':u.pathname==='/api/notary/health'?'/api/consulting/health':u.pathname,m=request.method;
   if(path==='/api/room/webhook'&&m==='POST')return webhook(request);
   if(!path.startsWith('/api/consulting/')&&!path.startsWith('/api/admin/consulting/'))return null;
   const origin=request.headers.get('origin'),publicOrigin=['https://bonitamultiservices.com','https://www.bonitamultiservices.com'].includes(origin),same=origin===config.baseUrl;
@@ -90,13 +90,13 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
    if(path==='/api/consulting/health'&&m==='GET')return cors(json({available:true,paymentReady:ready(),portal:true}));
    if(m==='POST')requireCondition(same||(publicOrigin&&path==='/api/consulting/inquiries'),'Request origin is not allowed.',403);
    if(path==='/api/consulting/inquiries'&&m==='POST'){
-    const i=await body(request);if(i.website)return cors(json({received:true},201));
+    const i=await body(request);if(notaryInquiry)i.service='Notary & Apostille — '+clean(i.service,130);if(i.website)return cors(json({received:true},201));
     const email=clean(i.email,254).toLowerCase();requireCondition(validEmail(email),'Enter a valid email.');requireCondition(i.consent===true,'Please authorize a reply.');
     requireCondition(one('SELECT COUNT(*) AS n FROM consulting_projects WHERE created>?',now()-60000).n<10&&one('SELECT COUNT(*) AS n FROM consulting_projects WHERE email=? AND created>?',email,now()-3600000).n<3,'Please contact BMS to update your request.',429);
     const p={id:randomUUID(),name:text(i.name,100),company:clean(i.company,160),email,phone:text(i.phone,40),service:text(i.service,160),budget:clean(i.budget,100),location:clean(i.location,160),summary:text(i.summary,3000)};
     atomic(()=>{run('INSERT INTO consulting_projects(id,name,company,email,phone,service,budget,location,summary,created) VALUES(?,?,?,?,?,?,?,?,?,?)',p.id,p.name,p.company,p.email,p.phone,p.service,p.budget,p.location,p.summary,now());
-     mail(p.id,'inquiry_admin',config.adminEmail,'New business & sales consulting inquiry',[`${p.name} · ${p.company}\n${p.email} · ${p.phone}\n${p.service} · ${p.budget}\n${p.location}`,p.summary,`Review: ${config.baseUrl}/consulting-admin`]);
-     mail(p.id,'inquiry_customer',p.email,'Your consulting inquiry is with BMS',[`Thank you, ${p.name}. We received your ${p.service} inquiry.`,p.summary,'We will contact you to clarify scope, timing and the right next step. No project or payment obligation is created by this inquiry.',`Reference: ${p.id}`]);
+     mail(p.id,'inquiry_admin',config.adminEmail,p.service.startsWith('Notary & Apostille')?'New BMS Notary & Apostille request':'New business & sales consulting inquiry',[`${p.name} · ${p.company}\n${p.email} · ${p.phone}\n${p.service} · ${p.budget}\n${p.location}`,p.summary,`Review: ${config.baseUrl}/consulting-admin`]);
+     mail(p.id,'inquiry_customer',p.email,p.service.startsWith('Notary & Apostille')?'Your notary service request is with BMS':'Your consulting inquiry is with BMS',[`Thank you, ${p.name}. We received your ${p.service} inquiry.`,p.summary,'We will contact you to clarify scope, timing and the right next step. No project or payment obligation is created by this inquiry.',`Reference: ${p.id}`]);
     });return cors(json({received:true,id:p.id},201));
    }
    if(path==='/api/consulting/access'&&m==='POST'){
@@ -135,10 +135,10 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
     }
     if(path.endsWith('/payment-link')&&m==='POST'){
      const r=one('SELECT * FROM consulting_invoices WHERE id=? AND project_id=?',i.invoiceId||'',p.id);requireCondition(r,'Payment request not found.',404);const link=await checkout(r);
-     if(i.send===true)mail(r.id,'payment_link_'+r.attempt,p.email,'Your customized BMS consulting payment link',[`${r.title} · $${(r.amount/100).toFixed(2)}`,r.scope,`Pay securely: ${link.url}`,`Your private project portal: ${config.baseUrl}/consulting-portal`]);
+     if(i.send===true)mail(r.id,'payment_link_'+r.attempt,p.email,'Your customized BMS consulting payment link',[`${r.title} · $${(r.amount/100).toFixed(2)}`,r.scope,`Pay securely: ${link.url}`,`Your private project portal: ${config.baseUrl}/client-portal`]);
      return json(link);
     }
-    if(path.endsWith('/message')&&m==='POST'){const message=text(i.message,3000);run('INSERT INTO consulting_messages VALUES(?,?,?,?,?)',randomUUID(),p.id,'BMS',message,now());mail(randomUUID(),'message',p.email,'A new update in your BMS client portal',[message,`View your project: ${config.baseUrl}/consulting-portal`]);return json({ok:true});}
+    if(path.endsWith('/message')&&m==='POST'){const message=text(i.message,3000);run('INSERT INTO consulting_messages VALUES(?,?,?,?,?)',randomUUID(),p.id,'BMS',message,now());mail(randomUUID(),'message',p.email,'A new update in your BMS client portal',[message,`View your project: ${config.baseUrl}/client-portal`]);return json({ok:true});}
    }else{
     const email=client(request);
     if(path==='/api/consulting/projects'&&m==='GET')return json({projects:all("SELECT * FROM consulting_projects WHERE email=? AND status<>'Inquiry' ORDER BY created DESC",email).map(view)});
