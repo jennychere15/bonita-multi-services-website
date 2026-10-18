@@ -135,7 +135,7 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
     }
     if(path.endsWith('/payment-link')&&m==='POST'){
      const r=one('SELECT * FROM consulting_invoices WHERE id=? AND project_id=?',i.invoiceId||'',p.id);requireCondition(r,'Payment request not found.',404);const link=await checkout(r);
-     if(i.send===true)mail(r.id,'payment_link_'+r.attempt,p.email,'Your customized BMS consulting payment link',[`${r.title} · $${(r.amount/100).toFixed(2)}`,r.scope,`Pay securely: ${link.url}`,`Your private project portal: ${config.baseUrl}/client-portal`]);
+     if(i.send===true)mail(r.id,'payment_link_'+r.attempt,p.email,'Your customized BMS payment link',[`${r.title} · $${(r.amount/100).toFixed(2)}`,r.scope,`Pay securely: ${link.url}`,`Your private project portal: ${config.baseUrl}/client-portal`]);
      return json(link);
     }
     if(path.endsWith('/message')&&m==='POST'){const message=text(i.message,3000);run('INSERT INTO consulting_messages VALUES(?,?,?,?,?)',randomUUID(),p.id,'BMS',message,now());mail(randomUUID(),'message',p.email,'A new update in your BMS client portal',[message,`View your project: ${config.baseUrl}/client-portal`]);return json({ok:true});}
@@ -143,7 +143,7 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
     const email=client(request);
     if(path==='/api/consulting/projects'&&m==='GET')return json({projects:all("SELECT * FROM consulting_projects WHERE email=? AND status<>'Inquiry' ORDER BY created DESC",email).map(view)});
     const i=await body(request),p=project(i.projectId,email);requireCondition(p.status!=='Inquiry','Project not found.',404);
-    if(path==='/api/consulting/message'&&m==='POST'){const message=text(i.message,3000);run('INSERT INTO consulting_messages VALUES(?,?,?,?,?)',randomUUID(),p.id,'Client',message,now());mail(randomUUID(),'message_admin',config.adminEmail,'New consulting client message',[`${p.company||p.name} · ${p.email}`,message,`Review: ${config.baseUrl}/consulting-admin`]);return json({ok:true});}
+    if(path==='/api/consulting/message'&&m==='POST'){const message=text(i.message,3000);run('INSERT INTO consulting_messages VALUES(?,?,?,?,?)',randomUUID(),p.id,'Client',message,now());mail(randomUUID(),'message_admin',config.adminEmail,'New BMS client message',[`${p.company||p.name} · ${p.email}`,message,`Review: ${config.baseUrl}/consulting-admin`]);return json({ok:true});}
     if(path==='/api/consulting/checkout'&&m==='POST'){const r=one('SELECT * FROM consulting_invoices WHERE id=? AND project_id=?',i.invoiceId||'',p.id);requireCondition(r,'Payment request not found.',404);return json(await checkout(r));}
    }
    return json({error:'Not found.'},404);
