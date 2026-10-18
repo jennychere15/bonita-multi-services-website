@@ -43,6 +43,7 @@ export function createConsultingRoutes({db, stripe, config, adminAuth, body, not
    run("UPDATE consulting_invoices SET checkout_id=NULL,checkout_url=NULL,checkout_params=NULL,attempt=attempt+1,status='due' WHERE id=? AND status<>'paid'",invoice.id);
    invoice=one('SELECT * FROM consulting_invoices WHERE id=?',invoice.id);
   }
+  requireCondition(!p.service.startsWith('Notary & Apostille'),'Notary payments now use the BMS Notary Network portal. Contact BMS to migrate this quote.',409);
   let params=invoice.checkout_params?JSON.parse(invoice.checkout_params):{
    mode:'payment',customer_email:p.email,client_reference_id:invoice.id,
    metadata:{bms_consulting_invoice:invoice.id},payment_intent_data:{metadata:{bms_consulting_invoice:invoice.id}},
