@@ -1,0 +1,37 @@
+# Separate live service. Checkout remains paused until LIVE_PAYMENTS_ENABLED is explicitly enabled.
+# No sandbox database, keys, providers or email queue are copied.
+services:
+  - type: web
+    name: bms-provider-payments
+    runtime: node
+    plan: 0.5c-512mb
+    region: virginia
+    branch: feature/provider-payments
+    rootDir: payments
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /api/health
+    autoDeployTrigger: "off"
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: PAYMENT_MODE
+        value: live
+      - key: LIVE_PAYMENTS_ENABLED
+        value: "false"
+      - key: EMAIL_ENABLED
+        value: "false"
+      - key: EMAIL_FROM
+        value: Bonita Multi-Services <notifications@updates.bonitamultiservices.com>
+      - key: BMS_ADMIN_EMAIL
+        value: Admin@bonitamultiservices.com
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /var/data/payments-live.sqlite
+    disk:
+      name: bms-live-provider-records
+      mountPath: /var/data
+      sizeGB: 1
