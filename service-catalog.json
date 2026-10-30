@@ -1,0 +1,157 @@
+[
+  {
+    "id": "notary-office",
+    "label": "In-office notary",
+    "family": "notary"
+  },
+  {
+    "id": "notary-mobile",
+    "label": "Mobile notary",
+    "family": "notary"
+  },
+  {
+    "id": "notary-online",
+    "label": "Remote online notarization",
+    "family": "notary"
+  },
+  {
+    "id": "notary-signing",
+    "label": "Loan / real estate document signing",
+    "family": "notary"
+  },
+  {
+    "id": "notary-estate",
+    "label": "Attorney-prepared estate document signing",
+    "family": "notary"
+  },
+  {
+    "id": "notary-witness",
+    "label": "Witness coordination",
+    "family": "notary"
+  },
+  {
+    "id": "notary-i9",
+    "label": "Employer-authorized I-9 support",
+    "family": "notary"
+  },
+  {
+    "id": "apostille",
+    "label": "Apostille facilitation",
+    "family": "notary"
+  },
+  {
+    "id": "wedding-office",
+    "label": "In-office wedding ceremony",
+    "family": "wedding"
+  },
+  {
+    "id": "wedding-mobile",
+    "label": "Mobile / beach / destination wedding",
+    "family": "wedding"
+  },
+  {
+    "id": "wedding-vows",
+    "label": "Vow renewal / personalized ceremony",
+    "family": "wedding"
+  },
+  {
+    "id": "marriage-registration",
+    "label": "Marriage registration / license application assistance",
+    "family": "wedding"
+  },
+  {
+    "id": "marriage-record",
+    "label": "Certified marriage-record coordination",
+    "family": "wedding"
+  },
+  {
+    "id": "premarital-guidance",
+    "label": "Premarital course provider guidance",
+    "family": "wedding"
+  },
+  {
+    "id": "real-estate",
+    "label": "Real estate — commercial / investment / new construction / residential",
+    "family": "realestate"
+  },
+  {
+    "id": "rental-placement",
+    "label": "Rental property placement — owner / renter",
+    "family": "rental"
+  },
+  {
+    "id": "corporate-lodging",
+    "label": "Corporate / crew / government lodging coordination",
+    "family": "lodging"
+  },
+  {
+    "id": "senior-placement",
+    "label": "Senior placement & relocation",
+    "family": "senior"
+  },
+  {
+    "id": "relocation",
+    "label": "Relocation coordination",
+    "family": "relocation"
+  },
+  {
+    "id": "business-setup",
+    "label": "Business setup / registration assistance",
+    "family": "consulting"
+  },
+  {
+    "id": "business-consulting",
+    "label": "Business consulting / launch / expansion",
+    "family": "consulting"
+  },
+  {
+    "id": "sales-consulting",
+    "label": "Sales consulting / implementation / training",
+    "family": "consulting"
+  },
+  {
+    "id": "document-preparation",
+    "label": "Non-lawyer document preparation",
+    "family": "business"
+  },
+  {
+    "id": "passport-photos",
+    "label": "Passport photos",
+    "family": "business"
+  },
+  {
+    "id": "tax-preparation",
+    "label": "Tax preparation — outsourced provider coordination",
+    "family": "business"
+  },
+  {
+    "id": "meeting-room",
+    "label": "Meeting room / day office rental",
+    "family": "room"
+  },
+  {
+    "id": "preferred-network",
+    "label": "Preferred Provider Network — request a service provider",
+    "family": "network"
+  },
+  {
+    "id": "preferred-network-business",
+    "label": "Preferred Provider Network — business / property service coordination",
+    "family": "network"
+  },
+  {
+    "id": "vendor-application",
+    "label": "Join the Preferred Provider Network",
+    "family": "vendor"
+  },
+  {
+    "id": "wedding-provider",
+    "label": "Wedding professional / provider application",
+    "family": "weddingvendor"
+  },
+  {
+    "id": "other",
+    "label": "Other / help choosing a service",
+    "family": "other"
+  }
+]
