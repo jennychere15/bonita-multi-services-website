@@ -123,8 +123,18 @@
   },
   {
     "id": "tax-preparation",
-    "label": "Tax preparation — outsourced provider coordination",
-    "family": "business"
+    "label": "Tax preparation — personal / business",
+    "family": "tax"
+  },
+  {
+    "id": "tax-personal",
+    "label": "Personal income tax preparation",
+    "family": "tax"
+  },
+  {
+    "id": "tax-business",
+    "label": "Business income tax preparation",
+    "family": "tax"
   },
   {
     "id": "meeting-room",
@@ -175,7 +185,17 @@
  if(!booking)return;
  const service=booking.elements.requested_service,description=booking.elements.service_description;
  const query=new URLSearchParams(location.search);if(byId.has(query.get('service')))service.value=query.get('service');
+ const taxMode=document.createElement('label');
+ taxMode.hidden=true;
+ taxMode.innerHTML='Tax appointment format *<select name="tax_appointment_format"><option value="">Choose in-office or virtual</option><option>In-office — Bonita Springs</option><option>Virtual appointment</option></select>';
+ const taxHelp=document.createElement('p');
+ taxHelp.className='bms-form-note';taxHelp.hidden=true;
+ taxHelp.textContent='Tax preparation: office hours Monday–Friday, 10 AM–4 PM. Available 7 days a week by confirmed appointment. Include only your return type and tax year below. Do not enter income amounts, Social Security numbers, taxpayer IDs, bank information or tax-document contents. Your preparer will confirm document-exchange instructions separately.';
+ description.closest('label').before(taxMode,taxHelp);
+ function updateTaxFields(){const isTax=byId.get(service.value)?.family==='tax';taxMode.hidden=taxHelp.hidden=!isTax;taxMode.querySelector('select').required=isTax;taxMode.querySelector('select').disabled=!isTax;if(isTax)description.placeholder='Example: Personal return for tax year 2026; virtual appointment preferred. No sensitive financial details.';else description.placeholder='What do you need help with? Include your goal, preferred timing and any useful non-sensitive details.';}
+ service.addEventListener('change',updateTaxFields);
  try{const stored=JSON.parse(sessionStorage.getItem(storageKey)||'null');sessionStorage.removeItem(storageKey);if(stored&&Date.now()-stored.time<30*60*1000&&(!service.value||service.value===stored.service)){if(byId.has(stored.service))service.value=stored.service;for(const key of ['name','email','phone'])if(stored[key])booking.elements[key].value=stored[key];description.value=stored.description||'';}}catch{}
+ updateTaxFields();
  let sent=false,sending=false;
  description.addEventListener('input',()=>description.setCustomValidity(''));
  booking.addEventListener('submit',async event=>{
@@ -183,7 +203,7 @@
   description.setCustomValidity(description.value.trim()?'':'Please briefly describe the service you need.');if(!booking.reportValidity())return;
   const item=byId.get(service.value);if(!item)return;
   const data=Object.fromEntries(new FormData(booking)),status=document.getElementById('bms-booking-status'),button=booking.querySelector('button[type=submit]'),fallback=document.getElementById('bms-booking-fallback');
-  const summary=['Appointment request','Service: '+item.label,'Preferred reply: '+data.contact_method,'Preferred date: '+(data.preferred_date||'Choose during scheduling'),'Brief: '+description.value.trim()].join('\n');
+  const summary=['Appointment request','Service: '+item.label,...(item.family==='tax'?['Tax appointment format: '+data.tax_appointment_format]:[]),'Preferred reply: '+data.contact_method,'Preferred date: '+(data.preferred_date||'Choose during scheduling'),'Brief: '+description.value.trim()].join('\n');
   const payload={name:data.name,email:data.email,phone:data.phone,company:'',location:data.location||'To confirm',service:'BMS appointment: '+item.label,summary,budget:'Confirm scope and itemized fees before payment',consent:booking.elements.consent.checked,website:data._honey||''};
   sending=true;button.disabled=true;status.textContent='Sending your service details to BMS…';fallback.hidden=true;
   try{
