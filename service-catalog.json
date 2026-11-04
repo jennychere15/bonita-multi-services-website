@@ -121,8 +121,18 @@
   },
   {
     "id": "tax-preparation",
-    "label": "Tax preparation — outsourced provider coordination",
-    "family": "business"
+    "label": "Tax preparation — personal / business",
+    "family": "tax"
+  },
+  {
+    "id": "tax-personal",
+    "label": "Personal income tax preparation",
+    "family": "tax"
+  },
+  {
+    "id": "tax-business",
+    "label": "Business income tax preparation",
+    "family": "tax"
   },
   {
     "id": "meeting-room",
