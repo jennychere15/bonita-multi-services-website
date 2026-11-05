@@ -216,6 +216,7 @@
    else if(notaryKind[item.id]){link.href='https://bms-provider-payments.onrender.com/notary-book?kind='+notaryKind[item.id];link.textContent='Choose your notary appointment →';}
    else if(item.id==='vendor-application'){link.href='provider-network.html#apply';link.textContent='Complete provider application →';}
    else if(item.id==='wedding-provider'){link.href='wedding-providers.html#apply';link.textContent='Complete wedding-provider application →';}
+   else if(item.id==='rental-placement'){link.href='https://calendar.app.google/KvftY6Nc4Gyhe7E3A';link.textContent='Choose your property placement call →';}
    else if(item.family==='tax'){link.href='https://calendar.app.google/nbDSKFHGidPsuRhU6';link.textContent='Choose your tax appointment time →';}
    else{link.href='https://calendar.app.google/6BNgcTPhgPHVEg3n8';link.textContent='Choose your consultation time →';}
    document.getElementById('bms-booking-reference').textContent='Service: '+item.label+'. Request reference: '+result.id+'.';
