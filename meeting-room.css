@@ -1,2 +1,20 @@
 .room-hero{display:grid;grid-template-columns:1fr 1fr;gap:5%;max-width:1240px;margin:auto;padding:65px 6%;align-items:center}.room-hero h1{font-family:Georgia,serif;font-size:clamp(40px,4.5vw,64px);line-height:1.1;color:#062b4f;font-weight:400}.room-hero p,.room-section p{font-size:17px;line-height:1.8}.room-hero figure{margin:0}.room-hero img{width:100%;max-height:650px;object-fit:cover;border-radius:120px 8px 8px 8px}.room-hero figcaption{font-size:12px;line-height:1.6;margin-top:10px;color:#526171}.room-facts{margin-top:25px;line-height:1.8;font-size:14px}.room-section{padding:65px max(6%,calc((100vw - 1180px)/2));scroll-margin-top:20px}.room-section h2{font:400 clamp(30px,3vw,43px)/1.2 Georgia,serif;color:#062b4f}.room-intro{max-width:800px}.room-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:32px}.room-grid article{border-top:2px solid #a83262;padding-top:18px}.room-tint{background:#f7f4f2}.room-prices{display:grid;grid-template-columns:1fr 1fr;gap:25px}.room-prices article{background:white;padding:32px;border:1px solid #dfd6d8;border-radius:8px}.room-price{font:400 50px Georgia,serif;color:#062b4f}.room-price span{font:16px Arial,sans-serif}.room-location{display:grid;grid-template-columns:1fr 1fr;gap:8%}.room-total{font-size:24px!important;color:#062b4f;font-weight:700}#room-result{margin-top:25px;border-top:1px solid #ddd;padding-top:15px}#room-draft{min-height:240px}@media(max-width:760px){.room-hero,.room-grid,.room-prices,.room-location{grid-template-columns:1fr}.room-hero{padding-top:35px;gap:30px}.room-hero img{max-height:520px}.room-section{padding-top:40px;padding-bottom:40px}}
 .room-photo-detail{display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:48px}.room-photo-detail figure{margin:0}.room-photo-detail img{display:block;width:100%;height:480px;object-fit:cover;border-radius:6px}.room-photo-detail figcaption{font-size:12px;line-height:1.6;margin-top:10px;color:#526477}@media(max-width:700px){.room-photo-detail{grid-template-columns:1fr;gap:24px}.room-photo-detail img{height:auto;max-height:560px;object-fit:cover}}
+
+/* Meeting room presentation: full artwork and room composition at every width. */
+.room-hero{max-width:1400px;grid-template-columns:minmax(0,1fr) minmax(0,1.08fr);gap:6%;padding-top:56px;padding-bottom:70px;background:#fffaf4}
+.room-hero h1{font-size:clamp(38px,4.2vw,60px);letter-spacing:-.025em;margin:20px 0 26px}
+.room-hero figure{box-shadow:0 20px 55px #062b4f18;border:8px solid white;border-radius:12px}
+.room-hero img{display:block;width:100%;height:auto;max-height:none;object-fit:contain;border-radius:5px}
+.room-hero .btn{margin-top:10px}.room-facts{border-top:1px solid #d8c5a7;padding-top:18px;color:#40566b}
+.room-section{max-width:1440px;margin:auto;box-sizing:border-box}.room-tint{max-width:none}
+.room-section h2{letter-spacing:-.02em;margin-top:14px;margin-bottom:24px}.room-intro{max-width:900px;color:#40566b}
+.room-grid article{border-top:2px solid #bf9d66}.room-grid h3{color:#062b4f}
+.room-prices article{border-color:#e6dac9;border-radius:12px;box-shadow:0 8px 25px #062b4f08}
+.room-photo-detail{grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:60px}
+.room-photo-detail img{width:100%;height:auto;max-height:none;object-fit:contain;border-radius:10px}
+.room-faq{background:#fffaf4}.room-faq details{border-bottom:1px solid #dfd4c2;padding:20px 0}
+.room-faq summary{font-size:20px;font-weight:600;color:#062b4f;cursor:pointer}.room-faq details p{max-width:850px;color:#40566b}
+.room-faq>.btn{margin-top:30px}
+#reserve .bms-service-form{box-shadow:0 10px 32px #062b4f0a;border-radius:12px}
+@media(max-width:760px){.room-hero,.room-photo-detail{grid-template-columns:1fr;gap:30px}.room-hero{padding:32px 6% 44px}.room-hero h1{font-size:38px}.room-hero figure{border-width:5px}.room-photo-detail img,.room-hero img{height:auto;max-height:none}.room-photo-detail{gap:24px}.room-prices article{padding:26px}.room-faq summary{font-size:19px}}
