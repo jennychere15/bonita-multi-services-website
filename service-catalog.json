@@ -70,6 +70,21 @@
     "family": "vendor"
   },
   {
+    "id": "business-setup",
+    "label": "Business setup and launch",
+    "family": "consulting"
+  },
+  {
+    "id": "business-consulting",
+    "label": "Business consulting and expansion",
+    "family": "consulting"
+  },
+  {
+    "id": "sales-consulting",
+    "label": "Sales strategy, implementation and training",
+    "family": "consulting"
+  },
+  {
     "id": "other",
     "label": "Help choosing a BMS service",
     "family": "other"
