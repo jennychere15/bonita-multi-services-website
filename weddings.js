@@ -9,3 +9,11 @@ for(const form of document.querySelectorAll('form[data-wedding-form],#wedding-fo
  inputs.forEach(input=>input.addEventListener('change',validate));
  form.addEventListener('submit',event=>{if(!validate()){event.preventDefault();form.reportValidity();}});
 }
+// Keep the shared service category consistent with the ceremony detail selected.
+const weddingForm=document.getElementById('wedding-form');
+if(weddingForm){
+ const detail=weddingForm.querySelector('#wedding-service'),category=weddingForm.querySelector('[data-all-services]');
+ const categoryFor=value=>value.startsWith('Office ceremony')?'wedding-office':value.startsWith('Mobile')||value.includes('destination')?'wedding-mobile':value.includes('Vow renewal')?'wedding-vows':value.startsWith('Marriage-license')||value.startsWith('License help')?'marriage-registration':value.startsWith('Certified')?'marriage-record':value.startsWith('Premarital')?'premarital-guidance':'wedding-office';
+ detail?.addEventListener('change',()=>{if(category)category.value=categoryFor(detail.value);});
+ document.querySelectorAll('[data-pick]').forEach(link=>link.addEventListener('click',()=>{if(category)category.value=categoryFor(link.dataset.pick||'');}));
+}

@@ -85,6 +85,41 @@
     "family": "consulting"
   },
   {
+    "id": "wedding-office",
+    "label": "In-office wedding ceremony",
+    "family": "wedding"
+  },
+  {
+    "id": "wedding-mobile",
+    "label": "Mobile and destination wedding ceremony",
+    "family": "wedding"
+  },
+  {
+    "id": "wedding-vows",
+    "label": "Vow renewal or personalized ceremony",
+    "family": "wedding"
+  },
+  {
+    "id": "marriage-registration",
+    "label": "Marriage-license application assistance",
+    "family": "wedding"
+  },
+  {
+    "id": "marriage-record",
+    "label": "Certified marriage-record coordination",
+    "family": "wedding"
+  },
+  {
+    "id": "premarital-guidance",
+    "label": "Premarital course provider guidance",
+    "family": "wedding"
+  },
+  {
+    "id": "wedding-provider",
+    "label": "Apply as a wedding provider",
+    "family": "wedding-vendor"
+  },
+  {
     "id": "other",
     "label": "Help choosing a BMS service",
     "family": "other"
