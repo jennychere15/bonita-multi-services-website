@@ -20,7 +20,7 @@ function update(){
  if(!sending&&!submitted)f.querySelector('button[type=submit]').textContent=paymentReady?'Reserve & pay securely':'Request this reservation';
 }
 async function checkAvailability(){
- const seq=++requestSequence;available=false;busy=[];
+ const seq=++requestSequence;available=false;paymentReady=false;busy=[];
  if(!date.value){availability.textContent='Select a date to check the room calendar.';update();return;}
  availability.textContent='Checking the room calendar…';update();
  try{const r=await fetch(api+'availability?date='+encodeURIComponent(date.value),{signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error();const j=await r.json();if(seq!==requestSequence)return;busy=j.busy;paymentReady=j.paymentReady===true;available=true;update();}
@@ -30,7 +30,7 @@ plan.addEventListener('change',update);start.addEventListener('change',update);h
 document.querySelectorAll('[data-plan]').forEach(a=>a.addEventListener('click',()=>{plan.value=a.dataset.plan;update();}));
 f.addEventListener('submit',async e=>{
  e.preventDefault();if(sending||!f.reportValidity())return;
- if(date.value<'2026-11-15'){date.setCustomValidity('Reservations begin November 15, 2026.');f.reportValidity();return;}
+ if(date.value<todayEastern){date.setCustomValidity('Please choose today or a future date.');f.reportValidity();return;}
  const s=selected();if(available&&overlaps(s.start,s.end)){update();return;}
  const data=new FormData(f),payload={payNow:paymentReady,date:date.value,plan:plan.value,start:s.start,hours:plan.value==='day'?12:Number(hours.value),guests:Number(data.get('Guests')),name:data.get('Name'),email:data.get('Email'),phone:data.get('Phone'),notes:[data.get('Company')?'Company: '+data.get('Company'):'',data.get('Requests')||''].filter(Boolean).join('\n'),consent:f.querySelector('input[type=checkbox]').checked};
  sending=true;update();status.textContent='Sending your reservation request…';document.getElementById('room-result').hidden=true;
@@ -38,4 +38,4 @@ f.addEventListener('submit',async e=>{
  catch(error){status.textContent='We could not confirm online submission. '+error.message+' If you already received an acknowledgment, please do not submit again. Otherwise, use the email option below.';const lines=['BMS PRIVATE MEETING ROOM — AVAILABILITY REQUEST','Date: '+payload.date,'Time: '+label(s.start/60)+'–'+label(s.end/60)+' Eastern','Room rental: $'+(payload.plan==='day'?165:45*payload.hours),'Guests: '+payload.guests,'Name: '+payload.name,'Email: '+payload.email,'Phone: '+payload.phone,payload.notes,'Availability confirmation and payment required; extras quoted separately.'];const draft=lines.join('\n');document.getElementById('room-draft').value=draft;document.getElementById('room-mail').href='mailto:Admin@bonitamultiservices.com?subject='+encodeURIComponent('Meeting room request — '+payload.date)+'&body='+encodeURIComponent(draft);document.getElementById('room-result').hidden=false;}
  finally{sending=false;update();}
 });
-date.value='2026-11-15';update();checkAvailability();
+const todayEastern=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());date.min=todayEastern;update();checkAvailability();

@@ -120,6 +120,11 @@
     "family": "wedding-vendor"
   },
   {
+    "id": "meeting-room",
+    "label": "Office & creative space rental",
+    "family": "room"
+  },
+  {
     "id": "other",
     "label": "Help choosing a BMS service",
     "family": "other"
