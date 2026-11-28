@@ -1,3 +1,4 @@
+import { createIntakeSync } from './intake-sync.js';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { accountReady, checkoutParams, equal, hash, quote, requireCondition, text, token } from './domain.js';
@@ -9,7 +10,7 @@ import { createNotaryRoutes } from './notary.js';
 
 const DAY = 86400000;
 const PUBLIC = new URL('../public/', import.meta.url);
-export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe, config, now = Date.now, notifications = createNotifications({ db, config, now }) }) {
+export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe, config, now = Date.now, notifications = createNotifications({ db, config, now }), intakeSync = createIntakeSync({ db, config, now }) }) {
   const environment = bindEnvironment(db, config);
   const one = (sql, ...args) => db.prepare(sql).get(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
@@ -59,8 +60,8 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
     requireCondition(validEmail(session.customer_details?.email), 'Customer email is unavailable in Stripe. Please review the payment before scheduling.', 409);
     return session.customer_details.email;
   }
-  const roomRoutes = createRoomRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, now });
-  const notaryRoutes = createNotaryRoutes({db,stripe,directStripe:roomStripe,config,adminAuth,body,notifications,refreshProvider,now});
+  const roomRoutes = createRoomRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, intakeSync, now });
+  const notaryRoutes = createNotaryRoutes({db,stripe,directStripe:roomStripe,config,adminAuth,body,notifications,refreshProvider,intakeSync,now});
   const consultingRoutes = createConsultingRoutes({ db, stripe: roomStripe, config, adminAuth, body, notifications, now });
   const loginAttempts = new Map();
   async function route(request) {
@@ -93,6 +94,12 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
       if (method === 'POST' && path === '/api/admin/logout') {
         run('DELETE FROM admin_sessions WHERE hash=?', hash(cookie(request, 'bms_admin') || ''));
         return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader('bms_admin', '', 0) });
+      }
+      if (method === 'GET' && path === '/api/admin/intake-sync') return json(intakeSync.overview());
+      if (method === 'POST' && path === '/api/admin/intake-sync/reconcile') {
+        const i = await body(request);
+        requireCondition(await intakeSync.reconcile(i.id, i.leadId, i.taskId), 'Verify the exact existing Close lead and assigned task reference before reconciling.', 409);
+        return json({ reconciled: true });
       }
       if (method === 'GET' && path === '/api/admin/overview') return json({
         providers: db.prepare('SELECT id,name,email,account_id,ready,connected,expires FROM providers ORDER BY created DESC LIMIT 100').all(),
@@ -310,7 +317,7 @@ export function createApp({ db, stripe, roomStripe = null, oauthStripe = stripe,
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       return json({ received: true });
     }
-    const files = { '/notary-book': ['notary-book.html','text/html'], '/notary-vendor': ['notary-vendor.html','text/html'], '/notary-network.js': ['notary-network.js','text/javascript'], '/notary-network.css': ['notary-network.css','text/css'], '/client-portal': ['consulting-portal.html', 'text/html'], '/notary-portal': ['notary-portal.html', 'text/html'], '/notary-admin': ['notary-admin.html', 'text/html'], '/consulting-portal': ['consulting-portal.html', 'text/html'], '/consulting-admin': ['consulting-admin.html', 'text/html'], '/consulting-portal.js': ['consulting-portal.js', 'text/javascript'], '/consulting-admin.js': ['consulting-admin.js', 'text/javascript'], '/consulting.css': ['consulting.css', 'text/css'], '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/room-return.js': ['room-return.js', 'text/javascript'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/intake-admin': ['intake-admin.html','text/html'], '/intake-admin.js': ['intake-admin.js','text/javascript'], '/notary-book': ['notary-book.html','text/html'], '/notary-vendor': ['notary-vendor.html','text/html'], '/notary-network.js': ['notary-network.js','text/javascript'], '/notary-network.css': ['notary-network.css','text/css'], '/client-portal': ['consulting-portal.html', 'text/html'], '/notary-portal': ['notary-portal.html', 'text/html'], '/notary-admin': ['notary-admin.html', 'text/html'], '/consulting-portal': ['consulting-portal.html', 'text/html'], '/consulting-admin': ['consulting-admin.html', 'text/html'], '/consulting-portal.js': ['consulting-portal.js', 'text/javascript'], '/consulting-admin.js': ['consulting-admin.js', 'text/javascript'], '/consulting.css': ['consulting.css', 'text/css'], '/room-admin': ['room-admin.html', 'text/html'], '/room-admin.js': ['room-admin.js', 'text/javascript'], '/room-return': ['room-return.html', 'text/html'], '/room-return.js': ['room-return.js', 'text/javascript'], '/': ['index.html', 'text/html'], '/admin': ['index.html', 'text/html'], '/provider': ['index.html', 'text/html'], '/approve': ['index.html', 'text/html'], '/pay': ['index.html', 'text/html'], '/payment-return': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     if (method === 'GET' && files[path]) {
       let content = await readFile(new URL(files[path][0], PUBLIC));
       if (files[path][0] === 'index.html' && environment.live) content = content.toString().replace('SANDBOX PREVIEW', config.livePaymentsEnabled ? 'PROVIDER NETWORK' : 'PAYMENTS SETUP');

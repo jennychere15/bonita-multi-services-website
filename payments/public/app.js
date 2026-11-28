@@ -66,6 +66,7 @@ async function pay() {
 }
 async function dashboard() {
   const data = await api('/api/admin/overview', undefined, false);
+  const intakeLink = document.createElement('a'); intakeLink.href='/intake-admin'; intakeLink.textContent='Review service inquiries and CRM handoff'; app.append(intakeLink);
   page('BMS administration', 'Your provider network.', 'Invite approved providers, prepare quotes and follow payment progress.');
   const toolbar = node('div', undefined, 'toolbar'); app.append(toolbar);
   button(toolbar, 'Refresh status', dashboard, true);
