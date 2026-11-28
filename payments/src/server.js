@@ -1,3 +1,4 @@
+import { createIntakeSync } from './intake-sync.js';
 import http from 'node:http';
 import Stripe from 'stripe';
 import { openStore } from './store.js';
@@ -6,6 +7,9 @@ import { createNotifications } from './notifications.js';
 import { validateDeployment } from './environment.js';
 
 const config = {
+  closeIntakeEnabled: process.env.CLOSE_INTAKE_ENABLED === 'true', closeApiKey: process.env.CLOSE_API_KEY || '',
+  closeOwnerId: process.env.CLOSE_INTAKE_OWNER_ID || '', closeLeadStatusId: process.env.CLOSE_INTAKE_STATUS_ID || '',
+  closeInternalEmails: (process.env.CLOSE_INTERNAL_EMAILS || '').split(',').map(s => s.trim()).filter(Boolean),
   notaryPaymentsEnabled: process.env.NOTARY_PAYMENTS_ENABLED === 'true', notarySubscriptionsEnabled: process.env.NOTARY_SUBSCRIPTIONS_ENABLED === 'true',
   roomRequestsEnabled: process.env.ROOM_REQUESTS_ENABLED === 'true', roomPaymentsEnabled: process.env.ROOM_PAYMENTS_ENABLED === 'true',
   roomStripeKey: process.env.ROOM_STRIPE_SECRET_KEY || '', roomWebhookSecret: process.env.ROOM_STRIPE_WEBHOOK_SECRET || '',
@@ -50,7 +54,10 @@ if (roomStripe) {
 }
 const db = openStore(process.env.DATABASE_PATH || './data/payments.sqlite');
 const notifications = createNotifications({ db, config });
-const app = createApp({ db, stripe, roomStripe, oauthStripe, config, notifications });
+const intakeSync = createIntakeSync({ db, config });
+const app = createApp({ db, stripe, roomStripe, oauthStripe, config, notifications, intakeSync });
+const intakeTimer = setInterval(() => intakeSync.flush().catch(() => console.error("BMS intake sync unavailable")), 5000);
+intakeTimer.unref();
 const emailTimer = setInterval(() => notifications.flush().catch(() => console.error('BMS email queue unavailable')), 1000);
 emailTimer.unref();
 const server = http.createServer(async (req, res) => {
@@ -76,4 +83,4 @@ const server = http.createServer(async (req, res) => {
 server.headersTimeout = 10000;
 server.requestTimeout = 20000;
 server.listen(Number(process.env.PORT || 4242), '0.0.0.0', () => console.log('BMS payment service is running in ' + environment.mode + ' mode; live checkout ' + (config.livePaymentsEnabled ? 'enabled' : 'paused') + '.'));
-process.on('SIGTERM', () => { clearInterval(emailTimer); server.close(() => process.exit(0)); });
+process.on('SIGTERM', () => { clearInterval(emailTimer); clearInterval(intakeTimer); server.close(() => process.exit(0)); });

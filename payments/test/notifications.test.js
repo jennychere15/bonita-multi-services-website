@@ -88,7 +88,7 @@ test('delayed room emails suppress expired holds and send only current confirmat
   const f = setup(t); f.config.paymentMode = 'live';
   const roomId = '12345678-1234-1234-1234-123456789012';
   f.db.exec('CREATE TABLE room_bookings(id TEXT PRIMARY KEY,status TEXT,date TEXT)');
-  f.db.prepare('INSERT INTO room_bookings VALUES(?,?,?)').run(roomId,'expired','2026-11-15');
+  f.db.prepare('INSERT INTO room_bookings VALUES(?,?,?)').run(roomId,'expired',new Date(f.now()+86400000).toISOString().slice(0,10));
   f.mail.room(roomId,'payment_link','customer@example.com','Complete payment',['Old link']);
   f.mail.room(roomId,'request_admin','admin@example.com','Request',['Expired setup request']);
   await f.mail.flush(); await f.mail.flush(); assert.equal(f.sent.length,0);

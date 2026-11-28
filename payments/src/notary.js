@@ -1,3 +1,5 @@
+import { createIntakeSync } from './intake-sync.js';
+import { serviceCategory } from './service-category.js';
 import {randomUUID,randomBytes} from 'node:crypto';
 import {hash,token,text,requireCondition} from './domain.js';
 import {validEmail} from './notifications.js';
@@ -9,7 +11,7 @@ export function notaryQuote(i){
  const handling=kind==='apostille'?15000+5000*(n-1):0,government=kind==='apostille'?n*(i.clerk===true?2000:1000):0;
  const service=notarial+travel+handling;return {kind,acts:n,notarial,travel,handling,government,service,total:service+government,fee:kind==='mobile'?Math.round(service*35/100):0};
 }
-export function createNotaryRoutes({db,stripe,directStripe,config,adminAuth,body,notifications,refreshProvider,now=Date.now}){
+export function createNotaryRoutes({db,stripe,directStripe,config,adminAuth,body,notifications,refreshProvider,now=Date.now,intakeSync=createIntakeSync({db,config,now})}){
  db.exec(`CREATE TABLE IF NOT EXISTS notary_vendors(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,phone TEXT NOT NULL,commission TEXT NOT NULL,expires TEXT NOT NULL,counties TEXT NOT NULL,services TEXT NOT NULL,notes TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Applied',verified TEXT NOT NULL DEFAULT '',provider_id TEXT REFERENCES providers(id),terms_version TEXT NOT NULL DEFAULT 'network-20261017',created INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS notary_requests(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL,phone TEXT NOT NULL,company TEXT NOT NULL,kind TEXT NOT NULL,acts INTEGER NOT NULL,location TEXT NOT NULL,county TEXT NOT NULL,preferred TEXT NOT NULL,details TEXT NOT NULL,total INTEGER NOT NULL,service_total INTEGER NOT NULL,government INTEGER NOT NULL,access_hash TEXT UNIQUE NOT NULL,status TEXT NOT NULL,job_id TEXT REFERENCES jobs(id),checkout_id TEXT UNIQUE,checkout_url TEXT,checkout_params TEXT,attempt INTEGER NOT NULL DEFAULT 1,payment_intent TEXT UNIQUE,membership_id TEXT,confirmed_at TEXT,terms_version TEXT NOT NULL DEFAULT 'service-20261017',created INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS notary_memberships(id TEXT PRIMARY KEY,email TEXT NOT NULL,name TEXT NOT NULL,company TEXT NOT NULL,plan TEXT NOT NULL,status TEXT NOT NULL,customer TEXT,subscription TEXT UNIQUE,checkout_id TEXT UNIQUE,checkout_url TEXT,checkout_params TEXT,period_start INTEGER NOT NULL DEFAULT 0,period_end INTEGER NOT NULL DEFAULT 0,used INTEGER NOT NULL DEFAULT 0,cancel_at_period_end INTEGER NOT NULL DEFAULT 0,event_time INTEGER NOT NULL DEFAULT 0,terms_version TEXT NOT NULL DEFAULT 'commercial-20261017',created INTEGER NOT NULL);
@@ -128,9 +130,17 @@ export function createNotaryRoutes({db,stripe,directStripe,config,adminAuth,body
  mail(id,'application_admin',config.adminEmail,'New BMS notary network application',[`${i.name} · ${email}\n${i.commission} · expires ${i.expires}`,`Review commission, bond, coverage, credentials and agreement: ${config.baseUrl}/notary-admin`]);mail(id,'application_client',email,'BMS received your notary application',['Your application is awaiting credential review. No assignments or earnings are guaranteed.',`Your vendor portal: ${config.baseUrl}/notary-vendor`]);return cors(json({received:true,id},201));
  }
  if(path==='/api/notary/inquiries'&&method==='POST'){
- const i=await body(request);if(i.website)return cors(json({received:true},201));const email=emailOf(i);requireCondition(i.consent===true,'Authorize contact about this request.');rate('book:'+email);const id=randomUUID(),access=token(),details=text(i.service,150)+'\n'+text(i.summary,3000);
- run("INSERT INTO notary_requests(id,name,email,phone,company,kind,acts,location,county,preferred,details,total,service_total,government,access_hash,status,created) VALUES(?,?,?,?,?,'custom',1,?,'','',?,0,0,0,?,'Quote requested',?)",id,text(i.name,100),email,text(i.phone,40),clean(i.company,160),text(i.location,300),details,hash(access),now());
- mail(id,'custom_intake',config.adminEmail,'New BMS custom notary request',[i.name+' · '+email,details,'Quote and assign through '+config.baseUrl+'/notary-admin']);mail(id,'custom_received',email,'BMS received your custom notary request',['BMS will confirm an itemized quote and assign a network notary. No charge has been made.','Your private request: '+config.baseUrl+'/notary-book#request='+access]);return cors(json({received:true,id},201));
+ const i=await body(request);if(i.website)return cors(json({received:true},201));const email=emailOf(i);requireCondition(i.consent===true,'Authorize contact about this request.');rate('book:'+email);
+ const id=randomUUID(),access=token(),service=text(i.service,150),details=service+'\n'+text(i.summary,3000),category=serviceCategory(service);
+ const name=text(i.name,100),phone=text(i.phone,40),company=clean(i.company,160),location=text(i.location,300);
+ atomic(()=>{
+  if(category.notary) run("INSERT INTO notary_requests(id,name,email,phone,company,kind,acts,location,county,preferred,details,total,service_total,government,access_hash,status,created) VALUES(?,?,?,?,?,'custom',1,?,'','',?,0,0,0,?,'Quote requested',?)",id,name,email,phone,company,location,details,hash(access),now());
+  else run('INSERT INTO service_inquiries(id,service,name,email,phone,company,location,details,consent,created) VALUES(?,?,?,?,?,?,?,?,1,?)',id,service,name,email,phone,company,location,details,now());
+  intakeSync.enqueue(id,{name,email,phone,company,location,service,details,consent:true,source:'https://bonitamultiservices.com/book.html'});
+  mail(id,'custom_intake',config.adminEmail,'New BMS '+category.label+' request',[`Request reference: ${id}`,name+' · '+email,details,'Review: '+config.baseUrl+(category.notary?'/notary-admin':'/intake-admin')]);
+  mail(id,'custom_received',email,'BMS received your '+category.label+' request',[`Request reference: ${id}`,`Service: ${service}`,category.next,'Your inquiry does not confirm an appointment. No charge has been made.',category.notary?'Your private request: '+config.baseUrl+'/notary-book#request='+access:'Next step: '+category.url,'Use the same name, email and request reference when scheduling or following up.']);
+ });
+ return cors(json({received:true,id},201));
  }
  if(path==='/api/notary/book'&&method==='POST'){
  const i=await body(request);if(i.website)return cors(json({received:true},201));const email=emailOf(i);requireCondition(i.consent===true&&i.terms===true,'Accept the booking and privacy terms.');rate('book:'+email);const r=atomic(()=>insertRequest(i,email));const url=config.baseUrl+'/notary-book#request='+r.access;

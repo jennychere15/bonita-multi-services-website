@@ -312,3 +312,11 @@ test('all-service notary network checkout itemizes government pass-through and s
  assert.equal((await f.event('checkout.session.completed',object)).r.status,200);
  assert.equal(f.db.prepare('SELECT paid FROM jobs').get().paid!==null,true);
 });
+
+test('intake administration requires sign-in and never exposes saved inquiry details publicly',async()=>{
+ const f=fixture();const inquiry=await f.request('/api/notary/inquiries',{origin:'https://bonitamultiservices.com',data:{name:'Client',email:'client@example.com',phone:'2395550100',company:'Firm',location:'Bonita Springs',service:'BMS appointment: Business consulting',summary:'Discuss expansion.',consent:true}});assert.equal(inquiry.r.status,201);
+ assert.equal((await f.request('/api/admin/intake-sync')).r.status,401);
+ const cookie=await f.login();const view=await f.request('/api/admin/intake-sync',{cookie});assert.equal(view.r.status,200);assert.equal(view.result.inquiries[0].id,inquiry.result.id);assert.equal(view.result.recent[0].status,'pending');
+ assert.equal((await f.request('/api/admin/intake-sync/reconcile',{cookie,origin:'https://evil.example',data:{}})).r.status,403);
+ assert.equal((await f.request('/api/admin/intake-sync/reconcile',{cookie,data:{id:inquiry.result.id,leadId:'lead_unknown',taskId:'task_unknown'}})).r.status,409);
+});

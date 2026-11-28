@@ -1,3 +1,4 @@
+import { createIntakeSync } from './intake-sync.js';
 import { randomUUID } from 'node:crypto';
 import { requireCondition } from './domain.js';
 import { validEmail } from './notifications.js';
@@ -14,8 +15,12 @@ export function roomQuote(i, now=Date.now()) {
  if(date===today){const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(now));const get=t=>Number(parts.find(p=>p.type===t).value);requireCondition(start>get('hour')*60+get('minute'),'Choose a future start time.');}
  return {date,start,end:start+duration,guests,plan:i.plan,amount:i.plan==='day'?16500:duration/60*4500};
 }
-export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,now=Date.now}) {
+export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,now=Date.now,intakeSync=createIntakeSync({db,config,now})}) {
  db.exec(`CREATE TABLE IF NOT EXISTS room_bookings(id TEXT PRIMARY KEY,date TEXT NOT NULL,start INTEGER NOT NULL,end INTEGER NOT NULL,guests INTEGER NOT NULL,plan TEXT NOT NULL,amount INTEGER NOT NULL,name TEXT NOT NULL,email TEXT NOT NULL,phone TEXT NOT NULL,notes TEXT NOT NULL,status TEXT NOT NULL,checkout_id TEXT UNIQUE,checkout_url TEXT,checkout_params TEXT,payment_intent TEXT UNIQUE,created INTEGER NOT NULL);CREATE INDEX IF NOT EXISTS room_inventory ON room_bookings(date,status,start,end);CREATE TABLE IF NOT EXISTS room_events(id TEXT PRIMARY KEY,created INTEGER NOT NULL);`);
+ // Additive migration: existing paid/open sessions retain their original fulfillment path.
+ for (const [column,type] of Object.entries({review_required:'INTEGER NOT NULL DEFAULT 0',reviewed_at:'INTEGER',reviewed_by:'TEXT',review_scope:'TEXT',review_terms:'TEXT',acceptance_evidence:'TEXT'})) {
+  if (!db.prepare('PRAGMA table_info(room_bookings)').all().some(c=>c.name===column)) db.exec('ALTER TABLE room_bookings ADD COLUMN '+column+' '+type);
+ }
  const one=(s,...a)=>db.prepare(s).get(...a),run=(s,...a)=>db.prepare(s).run(...a),json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json'}});
  const clean=(v,n)=>typeof v==='string'?v.trim().slice(0,n):'';
  const ready=()=>Boolean(config.roomPaymentsEnabled&&config.roomStripeKey&&config.roomWebhookSecret&&stripe);
@@ -25,6 +30,7 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
  const notify=(r,kind,title,lines,to=config.adminEmail)=>notifications.room(r.id,kind,to,title,lines);
  const atomic=fn=>{db.exec('BEGIN IMMEDIATE');try{const value=fn();db.exec('COMMIT');return value;}catch(e){db.exec('ROLLBACK');throw e;}};
  async function checkout(r){
+    requireCondition(r.reviewed_at || (!r.review_required && r.checkout_id), 'Record suitability, access, itemized scope and accepted terms before payment.', 409);
     if(r.checkout_id){const s=await stripe.checkout.sessions.retrieve(r.checkout_id);requireCondition(s.status==='open','This checkout is closed. Review the reservation.',409);return {url:r.checkout_url,sessionId:r.checkout_id};}
     atomic(()=>{requireCondition(!conflict(r),'This time is no longer available.',409);run("UPDATE room_bookings SET status='held' WHERE id=?",r.id);});
     // Keep inventory held on ambiguous network results; retry with the same idempotency key.
@@ -45,6 +51,7 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
     if(['checkout.session.completed','checkout.session.async_payment_succeeded'].includes(e.type)){
      requireCondition(['held','processing','confirmed'].includes(r.status),'Booking needs review.',409);
      if(s.payment_status==='paid'){
+      requireCondition(!r.review_required || r.reviewed_at, 'Payment received without recorded review; contact BMS administration.', 409);
       run("UPDATE room_bookings SET status='confirmed',payment_intent=? WHERE id=?",s.payment_intent,r.id);
       notify(r,'confirmed_'+r.email,'Your meeting room is confirmed',[`Thank you, ${r.name}. Your payment has been verified and your private room is reserved.`,describe(r),'Bonita Multi-Services · Oak Creek Crossing\n11100 Bonita Beach Road, Unit 108-B-1&2, Bonita Springs, FL 34135','Please include setup and packing up within your reserved hours. Maximum six guests. TV and whiteboard are available.','Coffee, breakfast catering, printing and scanning are optional and quoted separately. BMS will coordinate your equipment needs and arrival details. For help or booking changes, reply to this email or call 941-404-5379.'],r.email);
       notify(r,'confirmed_'+config.adminEmail,'Paid meeting room booking — action required',[describe(r),`Customer: ${r.name}\nEmail: ${r.email}\nPhone: ${r.phone}`,r.notes||'No optional requests provided.','Coordinate arrival and equipment needs with the customer. Quote any requested upgrades separately.',`Review the reservation: ${config.baseUrl}/room-admin`],config.adminEmail);
@@ -89,16 +96,25 @@ export function createRoomRoutes({db,stripe,config,adminAuth,body,notifications,
     requireCondition(!conflict(q),'This time is unavailable. Choose another.',409);
     requireCondition(one('SELECT COUNT(*) AS n FROM room_bookings WHERE email=? AND created>?',email,now()-3600000).n<5,'Please contact BMS to update your request.',429);
     requireCondition(one('SELECT COUNT(*) AS n FROM room_bookings WHERE created>?',now()-60000).n<10,'Please try again shortly or call BMS.',429);
-    const id=randomUUID();atomic(()=>{run("INSERT INTO room_bookings(id,date,start,end,guests,plan,amount,name,email,phone,notes,status,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",id,q.date,q.start,q.end,q.guests,q.plan,q.amount,name,email,phone,notes,'requested',now());const r=one('SELECT * FROM room_bookings WHERE id=?',id);notify(r,'request_admin','Meeting room request',[describe(r),`${name} · ${email} · ${phone}`,notes,`Review: ${config.baseUrl}/room-admin`]);notify(r,'request_customer','We received your meeting room request',[describe(r),'This is a request, not a confirmed reservation. BMS will check availability and send payment instructions. Optional upgrades require a separate quote.'],email);});
-    if(i.payNow===true && ready()){const payment=await checkout(one('SELECT * FROM room_bookings WHERE id=?',id));return cors(json({id,status:'held',checkoutUrl:payment.url,checkoutSessionId:payment.sessionId},201));}
+    const id=randomUUID();atomic(()=>{run("INSERT INTO room_bookings(id,date,start,end,guests,plan,amount,name,email,phone,notes,status,created,review_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)",id,q.date,q.start,q.end,q.guests,q.plan,q.amount,name,email,phone,notes,'requested',now());const r=one('SELECT * FROM room_bookings WHERE id=?',id);intakeSync.enqueue(id,{name,email,phone,company:'',location:'Bonita Springs room',service:'Office & creative space rental',source:'https://bonitamultiservices.com/meeting-room.html',consent:true,details:describe(r)+'\n'+notes});notify(r,'request_admin','Meeting room request',[describe(r),`${name} · ${email} · ${phone}`,notes,`Review: ${config.baseUrl}/room-admin`]);notify(r,'request_customer','We received your meeting room request',[describe(r),'This is a request, not a confirmed reservation. BMS will check availability and send payment instructions. Optional upgrades require a separate quote.'],email);});
+    // Public requests never create a payment session; ignore legacy payNow input.
     return cors(json({id,status:'requested',message:'Your request was received. BMS will confirm availability and send payment instructions.'},201));
    }
-   if(p==='/api/admin/room/overview'&&m==='GET')return json({paymentReady:ready(),requestsEnabled:Boolean(config.roomRequestsEnabled),bookings:db.prepare('SELECT id,date,start,end,guests,plan,amount,name,email,phone,notes,status,checkout_url FROM room_bookings ORDER BY date,start,created LIMIT 500').all()});
+   if(p==='/api/admin/room/overview'&&m==='GET')return json({paymentReady:ready(),requestsEnabled:Boolean(config.roomRequestsEnabled),bookings:db.prepare('SELECT id,date,start,end,guests,plan,amount,name,email,phone,notes,status,checkout_url,review_required,reviewed_at,reviewed_by,review_scope,review_terms,acceptance_evidence FROM room_bookings ORDER BY date,start,created LIMIT 500').all()});
    if(p==='/api/admin/room/block'&&m==='POST'){
     const i=await body(request),q=roomQuote({...i,guests:1},now()),id=randomUUID();atomic(()=>{requireCondition(!conflict(q),'Time overlaps a reservation.',409);run("INSERT INTO room_bookings(id,date,start,end,guests,plan,amount,name,email,phone,notes,status,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",id,q.date,q.start,q.end,1,q.plan,0,'BMS internal use',config.adminEmail,'',clean(i.notes,1000),'blocked',now());});return json({id,status:'blocked'},201);
    }
    if(p==='/api/admin/room/release'&&m==='POST'){
     const i=await body(request),r=one('SELECT * FROM room_bookings WHERE id=?',i.id||'');requireCondition(r&&['requested','blocked'].includes(r.status),'Only unpaid requests or internal blocks can be released here.',409);run("UPDATE room_bookings SET status='cancelled' WHERE id=?",r.id);return json({cancelled:true});
+   }
+   if(p==='/api/admin/room/review'&&m==='POST'){
+    const i=await body(request),r=one('SELECT * FROM room_bookings WHERE id=?',i.id||'');
+    requireCondition(r&&r.status==='requested'&&!r.checkout_id,'Review an unpaid request before checkout.',409);
+    const reviewer=clean(i.reviewer,120),scope=clean(i.scope,1500),terms=clean(i.terms,2000),evidence=clean(i.acceptanceEvidence,1000);
+    requireCondition(i.suitability===true&&i.access===true&&i.termsAccepted===true&&reviewer.length>=2&&scope.length>=10&&terms.length>=10&&evidence.length>=10,'Record reviewer, suitability, access, itemized scope, cancellation/rescheduling/refund terms and evidence of customer acceptance.');
+    run('UPDATE room_bookings SET reviewed_at=?,reviewed_by=?,review_scope=?,review_terms=?,acceptance_evidence=? WHERE id=?',now(),reviewer,scope,terms,evidence,r.id);
+    run('INSERT INTO audit(action,record_id,created) VALUES(?,?,?)','room_review_approved',r.id,now());
+    return json({reviewed:true});
    }
    if(p==='/api/admin/room/checkout'&&m==='POST'){
     requireCondition(ready(),'Connect the BMS direct-service Stripe key and room webhook first.',503);
